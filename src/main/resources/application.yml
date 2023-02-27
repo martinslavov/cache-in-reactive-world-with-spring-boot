@@ -1,0 +1,96 @@
+server:
+  port: 8080
+  forward-headers-strategy: framework
+
+# Spring #
+spring:
+  webflux:
+    base-path: "/app"
+  profiles:
+    active:
+      - test
+  output:
+    ansi:
+      enabled: ALWAYS
+      console-available: true
+
+# Springdoc #
+springdoc:
+  api-docs:
+    enabled: true
+    path: "/v3/api-docs"
+  swagger-ui:
+    enabled: true
+    path: "/swagger-ui-custom.html"
+    operationsSorter: method
+    disable-swagger-default-url: false
+    url: "/v3/api-docs"
+    config-url: "/v3/api-docs/swagger-config"
+  show-actuator: true
+
+# Logging #
+logging:
+  config: 'classpath:log4j2.yaml'
+  level:
+    root: INFO
+    org.springframework: INFO
+    org.springframework.r2dbc: DEBUG
+    io:
+      r2dbc: INFO
+    com:
+      reactive:
+        cache: INFO
+  org:
+    flywaydb:
+      core:
+        internal: DEBUG
+
+# Actuator Endpoints #
+management:
+  security:
+    enabled: false
+  server:
+    port: 8080
+  endpoints:
+    web:
+      exposure:
+        include: info,health,prometheus,metrics,env
+      base-path: "/actuator"
+    enabled-by-default: true
+  endpoint:
+    info:
+      enabled: true
+    shutdown:
+      enabled: false
+    health:
+      show-details: always
+
+# Environment variables #
+env:
+  hostname-swagger: localhost
+
+# TEST profile - configuration only for this profile
+---
+spring:
+  h2:
+    console:
+      enabled: true
+  config:
+    activate:
+      on-profile: test
+
+# DEV profile - configuration only for this profile
+---
+spring:
+  config:
+    activate:
+      on-profile: dev
+  r2dbc:
+    url: r2dbc:postgresql://127.0.0.1:5432/testdb
+    initialization-mode: never
+    username: test
+    password: test
+  data:
+    redis:
+      port: 6379
+      host: localhost

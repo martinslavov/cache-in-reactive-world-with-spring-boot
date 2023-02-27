@@ -1,0 +1,27 @@
+Configuration:
+  Appenders:
+    Console:
+      name: 'STDOUT'
+      target: 'SYSTEM_OUT'
+      PatternLayout:
+        pattern: "%d [%t] %-5p %c - %m%n"
+      type: 'PatternLayout'
+    RollingFile:
+      name: 'RollingFile'
+      fileName: 'logs/log.log'
+      filePattern: 'logs/%d{dd-MM-yyyy}-%i.log.gz'
+      immediateFlush: true
+      append: true
+      PatternLayout:
+        pattern: "%d [%t] %-5p %c - %m%n"
+      Policies:
+        CronTriggeringPolicy:
+          schedule: '0 0 0 * * ?'
+          evaluateOnStartup: true
+      DefaultRolloverStrategy:
+        max: 7
+  Loggers:
+    Root:
+      AppenderRef:
+        - ref: 'STDOUT'
+        - ref: 'RollingFile'
