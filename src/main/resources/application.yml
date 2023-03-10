@@ -69,15 +69,18 @@ management:
 env:
   hostname-swagger: localhost
 
-# TEST profile - configuration only for this profile
----
-spring:
-  h2:
-    console:
-      enabled: true
-  config:
-    activate:
-      on-profile: test
+# TEST-TC profile - configuration only for this profile
+#---
+#spring:
+#  config:
+#    activate:
+#      on-profile: test-tc
+#  r2dbc:
+#    url: r2dbc:tc:postgresql:///testdb?TC_IMAGE_TAG=15.2
+#  data:
+#    redis:
+#      port: 6379
+#      host: localhost
 
 # DEV profile - configuration only for this profile
 ---

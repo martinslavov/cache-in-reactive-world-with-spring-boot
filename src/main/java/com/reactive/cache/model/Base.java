@@ -7,6 +7,10 @@ public class Base {
     @Id
     protected Long id;
 
+    public Base(Long id) {
+        this.id = id;
+    }
+
     public Long getId() {
         return id;
     }

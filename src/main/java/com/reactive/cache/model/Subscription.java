@@ -11,6 +11,13 @@ public class Subscription extends Base{
 
     private int user_id;
 
+    public Subscription(Long id, String type, int active, int user_id) {
+        super(id);
+        this.type = type;
+        this.active = active;
+        this.user_id = user_id;
+    }
+
     public String getType() {
         return type;
     }

@@ -32,7 +32,7 @@ public class UserServiceImpl implements UserService {
     @Override
     public Mono<User> findById(Long id) {
        return kpi.measure(KPITypes.USER, "findById",
-               () ->hashOperations.get(CACHE_NAME_USER, id)
+               () -> hashOperations.get(CACHE_NAME_USER, id)
                        .switchIfEmpty(userRepository.findById(id)
                                .flatMap(user -> hashOperations.put(CACHE_NAME_USER, id, user)
                                        .thenReturn(user))));
