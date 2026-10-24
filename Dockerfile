@@ -1,10 +1,10 @@
 # Build stage: compile the healthcheck helper (the runtime image has no compiler)
-FROM dhi.io/eclipse-temurin:17-jdk-dev AS healthcheck
+FROM dhi.io/eclipse-temurin:25-jdk-dev AS healthcheck
 COPY docker/HealthCheck.java /src/HealthCheck.java
 RUN javac -d /out /src/HealthCheck.java
 
 # Package stage
-FROM dhi.io/eclipse-temurin:17
+FROM dhi.io/eclipse-temurin:25
 
 # Alpine appuser
 USER nonroot
