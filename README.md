@@ -128,8 +128,8 @@ Workflows live in `.github/workflows`:
 |----------|---------|--------------|
 | `ci-unit-tests.yml` (CI Unit Tests) | pull request, push to `main`, manual | `./gradlew build` on JDK 25: compiles, runs unit and integration tests, uploads the test report |
 | `ci-release.yml` (CI Release) | push of a tag `v*` | Builds, runs the tests and creates a GitHub release with the executable jar and generated release notes |
-| `codeql.yml` (CodeQL) | pull request and push to `main`, weekly | Static security analysis, results appear in the Security tab |
-| `pr-issue-tracking.yml` (PR Issue Tracking) | pull request opened | Creates one tracking issue per PR (found again by a hidden marker, so it is never duplicated) and links it in a PR comment |
+| `ci-code-review.yml` (CodeQL) | pull request and push to `main`, weekly | Static security analysis, results appear in the Security tab |
+| `ci-pr-issue-tracking.yml` (PR Issue Tracking) | pull request opened | Creates one tracking issue per PR (found again by a hidden marker, so it is never duplicated) and links it in a PR comment |
 
 Create a release:
 
@@ -145,3 +145,14 @@ Recommended repository settings:
 - Code scanning must be available for the repository to see the CodeQL results.
 
 PRs from forks get a read-only token, so PR Issue Tracking cannot create issues for them.
+
+## Branch workflow
+
+Commits (and pushes) from `main`/`master` are blocked by the versioned hooks in `.githooks`. Enable them once per clone and work in a branch:
+
+```bash
+git config core.hooksPath .githooks
+git checkout -b feature/my-change
+```
+
+For real enforcement on GitHub also enable branch protection for `main` (see Settings → Rules).

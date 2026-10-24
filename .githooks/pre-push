@@ -1,0 +1,6 @@
+#!/bin/sh
+branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
+  echo "Commits directly to '$branch' are not allowed. Create a branch, e.g.: git checkout -b feature/my-change" >&2
+  exit 1
+fi
