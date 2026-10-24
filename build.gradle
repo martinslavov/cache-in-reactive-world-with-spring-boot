@@ -50,6 +50,11 @@ dependencies {
 
 }
 
+// Only the executable boot jar is produced (Dockerfile and release rely on a single jar)
+jar {
+	enabled = false
+}
+
 tasks.named('test') {
 	useJUnitPlatform()
 }

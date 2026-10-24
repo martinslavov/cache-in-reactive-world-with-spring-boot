@@ -1,0 +1,39 @@
+# Runs the tests and publishes a GitHub release with the executable jar.
+# Release notes are generated from the merged pull requests and commits.
+# Trigger it by pushing a tag, for example: git tag v1.0.0 && git push origin v1.0.0
+name: CI Release
+
+on:
+  push:
+    tags:
+      - "v**"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build and test
+        run: ./gradlew build
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" build/libs/*.jar --title "$TAG" --generate-notes --verify-tag

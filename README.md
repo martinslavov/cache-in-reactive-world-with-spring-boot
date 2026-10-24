@@ -119,3 +119,29 @@ The Docker database is seeded with three users (ids 1 to 3) and three subscripti
 ```
 
 Integration tests start PostgreSQL through Testcontainers, so they need a running Docker daemon.
+
+## CI/CD (GitHub Actions)
+
+Workflows live in `.github/workflows`:
+
+| Workflow | Trigger | What it does |
+|----------|---------|--------------|
+| `ci-unit-tests.yml` (CI Unit Tests) | pull request, push to `main`, manual | `./gradlew build` on JDK 25: compiles, runs unit and integration tests, uploads the test report |
+| `ci-release.yml` (CI Release) | push of a tag `v*` | Builds, runs the tests and creates a GitHub release with the executable jar and generated release notes |
+| `codeql.yml` (CodeQL) | pull request and push to `main`, weekly | Static security analysis, results appear in the Security tab |
+| `pr-issue-tracking.yml` (PR Issue Tracking) | pull request opened | Creates one tracking issue per PR (found again by a hidden marker, so it is never duplicated) and links it in a PR comment |
+
+Create a release:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Recommended repository settings:
+
+- Settings → Actions → General → Workflow permissions: allow workflows to create issues and pull request comments (the PR Issue Tracking workflow also declares its permissions in the YAML).
+- Branch protection / rulesets for `main`: require the `CI Unit Tests` check before merging.
+- Code scanning must be available for the repository to see the CodeQL results.
+
+PRs from forks get a read-only token, so PR Issue Tracking cannot create issues for them.
