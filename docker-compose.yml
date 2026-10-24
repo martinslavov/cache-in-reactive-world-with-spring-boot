@@ -18,6 +18,7 @@ services:
       # Executed in alphabetical order on first start: schema, then seed data
       - ./db.migration/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
       - ./db.migration/V2__InsertUser.sql:/docker-entrypoint-initdb.d/02-insert-user.sql:ro
+      - ./db.migration/V3__InsertSubscription.sql:/docker-entrypoint-initdb.d/03-insert-subscription.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U test -d testdb"]
       interval: 5s

@@ -72,7 +72,7 @@ The `dev` profile connects to PostgreSQL on `127.0.0.1:5432` (`testdb`, user and
 
 | Service | Image | Port | Notes |
 |---------|-------|------|-------|
-| `postgres` | `postgres:15.2` | 5432 | `db.migration/init.sql` and `V2__InsertUser.sql` run on first start |
+| `postgres` | `postgres:15.2` | 5432 | `db.migration/init.sql`, `V2__InsertUser.sql` and `V3__InsertSubscription.sql` run on first start |
 | `redis` | `redis:7` | 6379 | |
 | `cache-service` | built from `Dockerfile` | 8080 | profile `app` |
 
@@ -110,7 +110,7 @@ All paths are under the `/app` base path.
 | `http://localhost:8080/app/swagger-ui-custom.html` | Swagger UI |
 | `http://localhost:8080/app/v3/api-docs` | OpenAPI document |
 
-The Docker database is seeded only with users (ids 1 to 3), so the subscription endpoints return 404 there until subscriptions are inserted.
+The Docker database is seeded with three users (ids 1 to 3) and three subscriptions for user 1 (ids 1 to 3), so every endpoint returns data out of the box.
 
 ## Tests
 
