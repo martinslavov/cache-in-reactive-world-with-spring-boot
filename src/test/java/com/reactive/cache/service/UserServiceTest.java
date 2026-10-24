@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.data.redis.core.ReactiveHashOperations;
 import org.springframework.test.context.ActiveProfiles;
 
@@ -33,10 +33,10 @@ public class UserServiceTest {
     @Autowired
     private UserService userService;
 
-    @MockBean
+    @MockitoBean
     private ReactiveHashOperations<String, Long, User> hashOperations;
 
-    @MockBean
+    @MockitoBean
     private UserRepository userRepository;
 
     @Test
