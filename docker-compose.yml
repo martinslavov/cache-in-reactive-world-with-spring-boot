@@ -1,0 +1,77 @@
+name: cache-docker
+services:
+  # ------------------------------
+  # PostgreSQL
+  # ------------------------------
+  postgres:
+    image: postgres:15.2
+    container_name: cache-postgres
+    networks:
+      - cache-docker-network
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+    volumes:
+      # Executed in alphabetical order on first start: schema, then seed data
+      - ./db.migration/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./db.migration/V2__InsertUser.sql:/docker-entrypoint-initdb.d/02-insert-user.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test -d testdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ------------------------------
+  # Redis
+  # ------------------------------
+  redis:
+    image: redis:7
+    container_name: cache-redis
+    networks:
+      - cache-docker-network
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ------------------------------
+  # Cache service (requires: gradle bootJar)
+  # ------------------------------
+  cache-service:
+    container_name: cache-service
+    networks:
+      - cache-docker-network
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      JDK_JAVA_OPTIONS: "-XX:MaxRAMPercentage=75"
+      SPRING_PROFILES_ACTIVE: "dev"
+      SPRING_R2DBC_URL: "r2dbc:postgresql://postgres:5432/testdb"
+      SPRING_R2DBC_USERNAME: "test"
+      SPRING_R2DBC_PASSWORD: "test"
+      SPRING_DATA_REDIS_HOST: "redis"
+      SPRING_DATA_REDIS_PORT: "6379"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "java", "-cp", "/app", "HealthCheck", "http://localhost:8080/app/actuator/health"]
+      start_period: 20s
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+networks:
+  cache-docker-network:
+    name: cache-docker-network
