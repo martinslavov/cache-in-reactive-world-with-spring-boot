@@ -22,7 +22,9 @@ public final class HealthCheck {
 
     static boolean isHealthy(String url) {
         try {
-            HttpURLConnection connection = (HttpURLConnection) URI.create(url).toURL().openConnection();
+            if (!(URI.create(url).toURL().openConnection() instanceof HttpURLConnection connection)) {
+                return false;
+            }
             connection.setConnectTimeout(TIMEOUT_MILLIS);
             connection.setReadTimeout(TIMEOUT_MILLIS);
             try {
