@@ -1,0 +1,75 @@
+# Starts the whole stack with docker compose (PostgreSQL, Redis and the RCAS image) and runs the
+# component tests against it.
+#
+# Requires the repository secrets DOCKERHUB_USERNAME and DOCKERHUB_TOKEN: the Dockerfile uses
+# Docker Hardened Images (dhi.io), which need a Docker Hub login to pull.
+name: CI Component Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-component-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  component-tests:
+    name: Component Tests (make up && make component-tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Setup gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Install/Update docker compose cli
+        uses: docker/setup-compose-action@v2
+        with:
+          version: latest
+
+      - name: Log in to Docker Hardened Images registry
+        uses: docker/login-action@v4
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Execute infrastructure up command
+        run: make up
+
+      - name: Execute component tests command
+        run: make component-tests
+
+      - name: Collect infrastructure logs
+        if: always()
+        run: make logs > infra-logs.txt 2>&1 || true
+
+      - name: Execute infrastructure down command
+        if: always()
+        run: make down
+
+      - name: Upload component test reports and infrastructure logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: component-tests-reports
+          path: |
+            build/reports/tests/componentTest/
+            build/test-results/componentTest/
+            infra-logs.txt
+          if-no-files-found: ignore

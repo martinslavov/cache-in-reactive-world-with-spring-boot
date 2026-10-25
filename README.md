@@ -126,6 +126,18 @@ The Docker database is seeded with three users (ids 1 to 3) and three subscripti
 
 Integration tests start PostgreSQL through Testcontainers, so they need a running Docker daemon.
 
+### Component tests
+
+Component tests (`src/componentTest`) call the running service over HTTP, so they exercise the whole stack: the RCAS image, PostgreSQL and Redis. They are not part of `./gradlew build`.
+
+```bash
+make up                # build the jar and image, start the stack and wait until it is healthy
+make component-tests   # ./gradlew componentTest against http://localhost:8080/app
+make down              # stop the stack and remove containers, network and volumes
+```
+
+Set `RCAS_BASE_URL` to test a service running somewhere else. `make logs` prints the container logs.
+
 ## CI/CD (GitHub Actions)
 
 Workflows live in `.github/workflows`:
@@ -133,6 +145,7 @@ Workflows live in `.github/workflows`:
 | Workflow | Trigger | What it does |
 |----------|---------|--------------|
 | `ci-unit-tests.yml` (CI Unit Tests) | pull request, push to `main`, manual | `./gradlew build` on JDK 25: compiles, runs unit and integration tests, uploads the test report |
+| `ci-component-tests.yml` (CI Component Tests) | pull request, push to `main`, manual | Builds the image, starts the stack with docker compose (`make up`), runs the component tests, collects the logs and tears everything down (`make down`) |
 | `ci-release.yml` (CI Release) | push of a tag `v*` | Builds, runs the tests and creates a GitHub release with the executable jar and generated release notes |
 | `ci-code-review.yml` (CodeQL) | pull request and push to `main`, weekly | Static security analysis, results appear in the Security tab |
 | `ci-pr-issue-tracking.yml` (PR Issue Tracking) | pull request opened | Creates one tracking issue per PR (found again by a hidden marker, so it is never duplicated) and links it in a PR comment |
@@ -147,7 +160,8 @@ git push origin v1.0.0
 Recommended repository settings:
 
 - Settings → Actions → General → Workflow permissions: allow workflows to create issues and pull request comments (the PR Issue Tracking workflow also declares its permissions in the YAML).
-- Branch protection / rulesets for `main`: require the `CI Unit Tests` check before merging.
+- Branch protection / rulesets for `main`: require the `CI Unit Tests` and `CI Component Tests` checks before merging.
+- Repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token): the Dockerfile uses Docker Hardened Images (`dhi.io`), which need a login to pull. Used by CI Component Tests.
 - Code scanning must be available for the repository to see the CodeQL results.
 
 PRs from forks get a read-only token, so PR Issue Tracking cannot create issues for them.
