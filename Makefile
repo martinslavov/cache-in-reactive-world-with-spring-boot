@@ -3,9 +3,9 @@ HEALTH_TIMEOUT ?= 180
 
 .PHONY: build up down logs component-tests sanity-tests monitoring-up monitoring-down
 
-## Build the executable jar used by the Docker image
+## Build the artifacts used by the Docker image: the executable jar and the health check class (build/healthcheck)
 build:
-	./gradlew bootJar -x test
+	./gradlew bootJar healthCheckClass -x test
 
 ## Start (requires `make build` first): build the image and start PostgreSQL, Redis and RCAS; waits until all containers are healthy
 up:

@@ -1,26 +1,20 @@
-# Build stage: compile the healthcheck helper (the runtime image has no compiler)
-FROM dhi.io/eclipse-temurin:25-jdk-dev AS healthcheck
-COPY docker/HealthCheck.java /src/HealthCheck.java
-RUN javac -d /out /src/HealthCheck.java
-
-# Package stage
+# Single-stage image on the hardened runtime: no shell, curl or compiler, so nothing is built here.
+# Artifacts come from `make build`: the boot jar and the precompiled health check class (build/healthcheck).
 FROM dhi.io/eclipse-temurin:25
 
-# Alpine appuser
 USER nonroot
-
-# Alpine appuser home
 WORKDIR /app
 
-# Space-separated JVM options, read natively by the java launcher (no shell needed).
-# Override at runtime with -e JDK_JAVA_OPTIONS="..."
+# Read natively by the java launcher; override at runtime with -e JDK_JAVA_OPTIONS="..."
 ENV JDK_JAVA_OPTIONS="-XX:MaxRAMPercentage=75"
 
-# Copy the service dependencies to the container
 COPY --chown=nonroot:nonroot build/libs/rcas-*.jar rcas.jar
+COPY --chown=nonroot:nonroot build/healthcheck/HealthCheck.class HealthCheck.class
 
-# Healthcheck helper (the hardened image has no shell or curl)
-COPY --from=healthcheck --chown=nonroot:nonroot /out/HealthCheck.class HealthCheck.class
+# Runs as nonroot inside the container and probes http://127.0.0.1:8080/app/actuator/health
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD ["java", "-cp", "/app", "HealthCheck"]
 
-## Start application
+EXPOSE 8080
+
 ENTRYPOINT ["java", "-jar", "rcas.jar"]
