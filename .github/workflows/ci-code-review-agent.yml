@@ -53,10 +53,12 @@ jobs:
                {role: "system", content: ("You are a code review agent. Review the pull request diff strictly following these guidelines. Report only real findings, each in the format Issue / Suggestion / Why, and mention good practices briefly. If nothing needs attention, say so. Reply in English, in Markdown.\n\n" + $guidelines)},
                {role: "user", content: ("Pull request: " + $title + "\n\nDiff:\n\n" + $diff)}]}' > request.json
 
-          curl -fsS https://models.github.ai/inference/chat/completions \
+          curl -sS https://models.github.ai/inference/chat/completions \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Content-Type: application/json" \
-            -d @request.json | jq -r '.choices[0].message.content' > review.md
+            -D headers.txt -o response.json -d @request.json || { cat headers.txt response.json; exit 1; }
+
+          jq -r '.choices[0].message.content' response.json > review.md || { cat headers.txt response.json; exit 1; }
 
           test -s review.md
 
