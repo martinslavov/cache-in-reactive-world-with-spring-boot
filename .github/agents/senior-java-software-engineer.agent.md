@@ -34,6 +34,6 @@ at a time, with production-quality code and tests, and finish by opening a pull 
 6. Update the documentation that is directly affected (README, API docs).
 7. Commit with clear messages; each message ends with the trailer
    `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`.
-8. Push and open a PR against `main` using `.github/pull_request_template.md`: fill every section, put `Related to: #<issue>`
-   under "Pull-request relations", and list the exact commands run with their result under "How has this been tested?".
+8. Push and open a PR against `main` using `.github/pull_request_template.md`: fill every section, put `Closes #<issue>`
+   under "Pull-request relations" (so the issue is closed and moved to Done on merge), and list the exact commands run with their result under "How has this been tested?".
    Do not merge unless the user asks. Report the PR URL and the check results.

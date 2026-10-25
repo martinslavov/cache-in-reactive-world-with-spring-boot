@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Close tracking issue
+      - name: Close tracking issue and collect issues linked with Closes
         id: close
         uses: actions/github-script@v9
         with:
@@ -31,12 +31,29 @@ jobs:
               !item.pull_request && item.body?.includes(marker)
             );
 
-            if (!issue) {
-              core.info(`No tracking issue found for PR #${pr.number}`);
-              return;
+            const nodeIds = [];
+
+            // Issues linked with "Closes #N" are closed by GitHub itself when the PR is merged
+            if (pr.merged) {
+              const linked = await github.graphql(
+                `query($owner: String!, $repo: String!, $number: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $number) {
+                      closingIssuesReferences(first: 20) { nodes { id number } }
+                    }
+                  }
+                }`,
+                { owner, repo, number: pr.number }
+              );
+              for (const node of linked.repository.pullRequest.closingIssuesReferences.nodes) {
+                core.info(`Linked issue #${node.number} will be moved to Done`);
+                nodeIds.push(node.id);
+              }
             }
 
-            if (issue.state === 'open') {
+            if (!issue) {
+              core.info(`No tracking issue found for PR #${pr.number}`);
+            } else if (issue.state === 'open') {
               await github.rest.issues.update({
                 owner,
                 repo,
@@ -46,22 +63,27 @@ jobs:
               });
             }
 
-            core.setOutput('issue-node-id', issue.node_id);
+            if (issue) {
+              nodeIds.push(issue.node_id);
+            }
+            core.setOutput('issue-node-ids', nodeIds.join(' '));
 
-      - name: Move tracking issue to Done on the board
-        if: steps.close.outputs.issue-node-id != ''
+      - name: Move issues to Done on the board
+        if: steps.close.outputs.issue-node-ids != ''
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          ISSUE_NODE_ID: ${{ steps.close.outputs.issue-node-id }}
+          ISSUE_NODE_IDS: ${{ steps.close.outputs.issue-node-ids }}
         run: |
           project=$(gh api graphql -f query='query { user(login: "martinslavov") { projectV2(number: 1) { id field(name: "Status") { ... on ProjectV2SingleSelectField { id options { id name } } } } } }' --jq '.data.user.projectV2')
           project_id=$(jq -r '.id' <<< "$project")
           field_id=$(jq -r '.field.id' <<< "$project")
           option_id=$(jq -r '.field.options[] | select(.name == "Done") | .id' <<< "$project")
-          # addProjectV2ItemById is idempotent and returns the existing item
-          item_id=$(gh api graphql \
-            -f query='mutation($project: ID!, $content: ID!) { addProjectV2ItemById(input: {projectId: $project, contentId: $content}) { item { id } } }' \
-            -f project="$project_id" -f content="$ISSUE_NODE_ID" --jq '.data.addProjectV2ItemById.item.id')
-          gh api graphql \
-            -f query='mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) { updateProjectV2ItemFieldValue(input: {projectId: $project, itemId: $item, fieldId: $field, value: {singleSelectOptionId: $option}}) { projectV2Item { id } } }' \
-            -f project="$project_id" -f item="$item_id" -f field="$field_id" -f option="$option_id"
+          for issue_node_id in $ISSUE_NODE_IDS; do
+            # addProjectV2ItemById is idempotent and returns the existing item
+            item_id=$(gh api graphql \
+              -f query='mutation($project: ID!, $content: ID!) { addProjectV2ItemById(input: {projectId: $project, contentId: $content}) { item { id } } }' \
+              -f project="$project_id" -f content="$issue_node_id" --jq '.data.addProjectV2ItemById.item.id')
+            gh api graphql \
+              -f query='mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) { updateProjectV2ItemFieldValue(input: {projectId: $project, itemId: $item, fieldId: $field, value: {singleSelectOptionId: $option}}) { projectV2Item { id } } }' \
+              -f project="$project_id" -f item="$item_id" -f field="$field_id" -f option="$option_id"
+          done

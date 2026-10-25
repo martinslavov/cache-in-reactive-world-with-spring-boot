@@ -27,7 +27,7 @@ The steps below are what the agents follow:
    Only `feature/*` and `hotfix/*` branches can be created.
 3. **Work.** Do the task. Commit the changes with clear messages. Never push to `main` directly.
 4. **Pull request.** When done, push the branch and open a PR against `main` using `.github/pull_request_template.md`.
-   Reference the issue from step 1 under "Pull-request relations" (`Related to: #N`).
+   Reference the issue from step 1 under "Pull-request relations" as `Closes #N`: GitHub closes it on merge and `PR Issue Close` moves it to Done.
    The `PR Issue Tracking` workflow adds the tracking issue link to the description.
    Required checks (unit, component and sanity tests) must pass before merging; do not merge unless asked.
 
