@@ -17,10 +17,12 @@ When a task has the `TASK-NAME:` line, run them one after the other (the main ag
 2. Delegate the issue (number, branch name and the original input) to `senior-java-software-engineer`. It implements the
    task, opens the PR and sets the commit status `QA Agent` to `pending` on the PR head SHA.
 3. Delegate the PR number to `senior-qa-engineer`. It reviews the diff, runs the checks and sets `QA Agent` on the head SHA to
-   `success` or `failure` (it must always set a final status). On `failure` it reports bugs to the engineer, who fixes them,
-   pushes, sets `QA Agent` to `pending` again and hands over to QA again.
-4. Report the issue and PR links, the merge status and the total elapsed time (see "Elapsed time" below) to the user. The engineer agent merges the PR by default once all checks,
-   including `QA Agent`, pass and there are no comments (see the agent file); do not merge if the task says to keep the PR open (e.g. "leave the PR open", "do not merge").
+   `success` or `failure` (it must always set a final status). On failures before round 5, the engineer fixes and pushes, sets `QA Agent`
+   to `pending`, and hands over to QA again. On round 5 failure, the engineer stops; automated work resumes only after a human removes
+   `needs-human-review`; after that, failures in rounds above 5 continue the loop normally.
+4. Report the issue and PR links, the merge status and total elapsed time (see "Elapsed time" below). The engineer merges by default only
+   when all checks, including current-head `QA Agent` success, pass; `needs-human-review` is absent; and no human comments or unresolved
+   findings remain. Resolved QA comments do not block after current-head QA success. Do not merge if the user asks to keep the PR open.
 
 The steps below are what the agents follow:
 
@@ -33,17 +35,27 @@ The steps below are what the agents follow:
 3. **Work.** Do the task. Commit the changes with clear messages. Never push to `main` directly.
 4. **Pull request.** When done, push the branch and open a PR against `main` using `.github/pull_request_template.md`.
    Reference the issue from step 1 under "Pull-request relations" as `Closes #N`: GitHub closes it on merge and `PR Issue Close` moves it to Done.
-   The `PR Issue Tracking` workflow adds the tracking issue link to the description.
-   Required checks (unit, component and sanity tests and `QA Agent`) must pass before merging.
-   Right after opening the PR, and after every new push, the engineer sets the QA gate to pending:
+   The `PR Issue Tracking` workflow adds the tracking issue link to the description. Required checks (unit, component and sanity tests and
+   `QA Agent`) must pass before merging. Right after opening the PR, and after every new push, the engineer sets the QA gate to pending:
    `gh api -X POST repos/martinslavov/rcas/statuses/<head-sha> -f state=pending -f context="QA Agent" -f description="Waiting for QA"`
-   (head SHA: `gh pr view <n> -R martinslavov/rcas --json headRefOid -q .headRefOid`). The QA agent then sets the same context
-   to `success` (QA passed) or `failure` (with the reason) using `-f state=success|failure`.
-5. **Merge (default).** Wait for all checks, then read the PR comments and reviews, ignoring automation (the `<!-- pr-tracking-link -->`
-   tracking issue comment and `github-actions` bot). If all checks pass, including `QA Agent` = success, and there are no other comments, merge with
-   `gh pr merge <n> -R martinslavov/rcas --merge --delete-branch`; this closes the task issue (`Closes #N`) and the tracking issue and
-   moves the board item to Done. If a check fails, fix it; if checks are pending/unknown or there are comments, do not merge and report.
-   If the task says to keep the PR open (e.g. "leave the PR open", "do not merge"), do not merge.
+   (head SHA: `gh pr view <n> -R martinslavov/rcas --json headRefOid -q .headRefOid`). QA sets the same context to `success` or `failure`.
+5. **Bounded QA loop.** Every QA failure report comment includes a hidden `<!-- qa-round:N -->` marker. QA derives the next round from the
+   count of these markers on that PR (not agent memory; the count is per PR), using this exact command with `<pr>` replaced by the PR number:
+   `gh api repos/martinslavov/rcas/issues/<pr>/comments --paginate -q '[.[] | select(.body | contains("<!-- qa-round:"))] | length'`.
+   Below round 5, QA sets `QA Agent` to `failure` with actionable findings and the engineer fix → QA retest loop continues. A human removing the label resumes this loop; thereafter, continue it for subsequent rounds, retaining all markers. On round 5 failure,
+   QA sets failure with description `QA iteration limit (5) reached – human review required`, applies `needs-human-review`, and posts an
+   escalation comment mentioning `@martinslavov` that summarizes open findings and the round count. Create the label if missing using:
+   `gh label create needs-human-review -R martinslavov/rcas --color B60205 --description "QA iteration limit reached; human review required" 2>/dev/null || true`.
+   Add it via `gh api -X POST repos/martinslavov/rcas/issues/<pr>/labels -f 'labels[]=needs-human-review'`; do not use `gh pr edit` because it
+   fails with a Projects classic error. The engineer makes no further fix commits or merge while the label is present. Automated agents never
+   remove it; only a human removing it explicitly resumes the loop. Existing round markers remain the source of truth after resumption.
+6. **Merge (default).** Wait for all checks and `QA Agent` success on the current head SHA. Before any auto-merge, check the review label with
+   `gh api repos/martinslavov/rcas/issues/<pr>/labels -q '.[].name | select(. == "needs-human-review")'`; if present, do not merge.
+   Ignore tracking/workflow automation comments. Resolved QA findings do not by themselves block auto-merge after QA succeeds on the current
+   head SHA; unresolved findings and any human (non-agent/non-automation) comment continue to block it. If all checks pass, the label is absent,
+   and no human comments or unresolved findings remain, merge with `gh pr merge <n> -R martinslavov/rcas --merge --delete-branch`; this closes
+   the task issue (`Closes #N`) and tracking issue and moves the board item to Done. If checks fail, are pending/unknown, the label is present,
+   or status/comments cannot be determined, do not merge and report/escalate. Honor an explicit request to keep the PR open.
 
 Commit messages end with the trailer `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`.
 
