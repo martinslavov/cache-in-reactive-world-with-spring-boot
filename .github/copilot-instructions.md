@@ -147,6 +147,11 @@ At the end, after everything is merged and all agents are done, it runs `date +%
 elapsed time (end minus start, as minutes and seconds) from the user's input until everything is merged and all agents have finished.
 Sub-agents report their own durations to the main agent when asked; the total is always computed by the main agent.
 
+Right after the merge (and before the final report) the main agent also records the elapsed time on the task issue and the PR:
+`scripts/post_task_elapsed.sh <issue> <pr> <start-epoch>`. It upserts one `<!-- task-elapsed -->` comment on each, so a re-run
+(e.g. after a follow-up merge for the same task) updates the existing comment instead of adding a new one. For an epic, run it
+for every sub-issue/PR pair and once more for the epic issue with the last PR and the epic's start time.
+
 
 ## Agent run records
 
