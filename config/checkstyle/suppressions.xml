@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!DOCTYPE suppressions PUBLIC "-//Checkstyle//DTD SuppressionFilter Configuration 1.2//EN" "https://checkstyle.org/dtds/suppressions_1_2.dtd">
+<suppressions>
+    <!-- snake_case user_id is mapped to the database column and the JSON field -->
+    <suppress checks="MethodName|MemberName|ParameterName" files="Subscription\.java"/>
+    <!-- Tests use given_when_then / test_method_case naming -->
+    <suppress checks="MethodName" files="[\\/]src[\\/]test[\\/]"/>
+</suppressions>

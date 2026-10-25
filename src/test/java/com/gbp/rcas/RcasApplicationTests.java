@@ -13,15 +13,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest
 @ActiveProfiles("test-tc")
 class RcasApplicationTests {
-	@Autowired
-	private UserHandler userHandler;
+    @Autowired
+    private UserHandler userHandler;
 
-	@Autowired
-	private SubscriptionHandler subscriptionHandler;
+    @Autowired
+    private SubscriptionHandler subscriptionHandler;
 
-	@Test
-	void contextLoads() {
-		assertThat(userHandler).isNotNull();
-		assertThat(subscriptionHandler).isNotNull();
-	}
+    @Test
+    void contextLoads() {
+        assertThat(userHandler).isNotNull();
+        assertThat(subscriptionHandler).isNotNull();
+    }
 }

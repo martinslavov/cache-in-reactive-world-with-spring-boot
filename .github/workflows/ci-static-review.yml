@@ -1,0 +1,44 @@
+# Automatic static code review: runs Checkstyle (config/checkstyle/checkstyle.xml, derived from
+# .github/code-review-guidelines.md) on every pull request. Violations fail the check.
+name: CI Static Review
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-static-review-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-review:
+    name: Static Review (checkstyle)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Setup gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Execute static review (checkstyle)
+        run: ./gradlew checkstyleMain checkstyleTest
+
+      - name: Upload checkstyle reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: checkstyle-reports
+          path: build/reports/checkstyle/
+          if-no-files-found: ignore
