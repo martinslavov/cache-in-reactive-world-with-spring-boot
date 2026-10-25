@@ -29,10 +29,8 @@ jobs:
       MAX_DIFF_CHARS: "60000"
 
     steps:
-      - name: Checkout base branch (guidelines come from the trusted base, not from the PR)
+      - name: Checkout
         uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
 
       - name: Get pull request diff
         run: |
