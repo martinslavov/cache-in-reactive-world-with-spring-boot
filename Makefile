@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 HEALTH_TIMEOUT ?= 180
 
-.PHONY: build up down logs component-tests
+.PHONY: build up down logs component-tests sanity-tests
 
 ## Build the executable jar used by the Docker image
 build:
@@ -22,3 +22,7 @@ logs:
 ## Run the component tests against the running stack
 component-tests:
 	./gradlew componentTest
+
+## Run only the fast sanity (smoke) tests against the running stack
+sanity-tests:
+	./gradlew sanityTest

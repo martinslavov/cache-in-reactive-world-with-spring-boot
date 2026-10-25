@@ -82,6 +82,20 @@ tasks.register('componentTest', Test) {
 	outputs.upToDateWhen { false }
 }
 
+tasks.register('sanityTest', Test) {
+	description = 'Runs only the fast sanity (smoke) tests against the running docker compose stack.'
+	group = 'verification'
+	testClassesDirs = sourceSets.componentTest.output.classesDirs
+	classpath = sourceSets.componentTest.runtimeClasspath
+	useJUnitPlatform {
+		includeTags 'sanity'
+	}
+	testLogging {
+		events 'passed', 'failed', 'skipped'
+	}
+	outputs.upToDateWhen { false }
+}
+
 tasks.withType(JavaCompile) {
 	options.compilerArgs << '-Xlint:-deprecation'
 }
