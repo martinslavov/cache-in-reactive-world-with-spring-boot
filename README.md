@@ -219,6 +219,9 @@ Custom agents live in `.github/agents/`:
 
 Give a task as `TASK-NAME:<name>` followed by the description. The product owner agent creates the issue, then the engineer
 agent implements it and opens the pull request, and the QA agent verifies it (Product Owner → Engineer → QA → merge). The rules are in `.github/copilot-instructions.md`.
+After five failed QA rounds, QA marks the PR `needs-human-review` and mentions `@martinslavov`; the engineer stops all fix commits and does not merge.
+Only a human removing that label resumes the loop, and QA round markers remain the per-PR source of truth. Auto-merge is blocked while the label is present.
+Resolved QA-finding comments do not block merging after QA succeeds on the current head SHA; comments from humans still block it.
 
 ### QA test scope and status
 

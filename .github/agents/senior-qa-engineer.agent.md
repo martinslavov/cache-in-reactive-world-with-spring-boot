@@ -28,16 +28,27 @@ You do not change production code; you may add or improve tests.
    to the PR branch; a push resets the status to `pending`, so re-read the head SHA afterwards).
 3. Apply the QA test-scope rules below to the changed paths, then run the required checks with JDK 25. Report only
    checks actually executed and their results in the `QA Agent` status description.
-4. Report every bug as a PR comment (`gh pr comment <n> -R martinslavov/rcas --body ...`) addressed to the engineer
-   with a reproducible description, and set the status to `failure`. The engineer fixes it, pushes (status becomes
-   `pending` again) and QA repeats from step 1.
-5. Set the final status on the **current** head SHA. You MUST always set a final status (`success` or `failure`); never
+4. For each QA failure, derive the round from comments on this PR, not agent memory. Replace `<pr>` with the PR number:
+   `gh api repos/martinslavov/rcas/issues/<pr>/comments --paginate -q '[.[] | select(.body | contains("<!-- qa-round:"))] | length'`.
+   Set `N` to that count plus one and include `<!-- qa-round:N -->` in the failure report comment. The count is per PR and includes
+   prior markers even after a human resumes the loop. The requested command is sufficient when comments fit on one page; to aggregate all
+   pages, use `gh api repos/martinslavov/rcas/issues/<pr>/comments --paginate --slurp -q '[.[][] | select(.body | contains("<!-- qa-round:"))] | length'`.
+5. On rounds below 5, or on any round after a human has removed the label to resume the loop, report actionable findings as a PR comment (`gh pr comment <n> -R martinslavov/rcas --body ...`),
+   set `QA Agent` to `failure` with a concise reason, and allow the engineer to fix and retest.
+6. On round 5 failure, enforce a hard stop: set `QA Agent` to `failure` with a description such as
+   `QA iteration limit (5) reached – human review required` (under 140 characters), apply the label and post a separate escalation
+   comment mentioning `@martinslavov` with the open findings and round count. Create the repository label if missing with this exact command:
+   `gh label create needs-human-review -R martinslavov/rcas --color B60205 --description "QA iteration limit reached; human review required" 2>/dev/null || true`
+   Add it through the Issues API (not `gh pr edit`, which fails with a Projects classic error):
+   `gh api -X POST repos/martinslavov/rcas/issues/<pr>/labels -f 'labels[]=needs-human-review'`.
+   Never remove the label; only a human may remove it to resume the loop. After removal, continue numbering from existing markers.
+7. Set the final status on the **current** head SHA. You MUST always set a final status (`success` or `failure`); never
    leave it `pending`, also not when a command fails or you are blocked (use `failure` with the reason).
    - QA passed and no findings remain unresolved:
      `gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=success -f context="QA Agent" -f description="<checks executed and results>"`
    - Otherwise:
      `gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=failure -f context="QA Agent" -f description="<checks executed and results, plus short reason; max 140 chars>"`
-6. Report to the caller: status set, checks run with results, bugs found.
+8. Report to the caller: status set, checks run with results, bugs found.
 
 ## QA test scope and status
 
@@ -46,3 +57,4 @@ You do not change production code; you may add or improve tests.
 - For runtime-affecting changes (application source or configuration, runtime dependencies or packaging, database migrations, or Docker/Compose runtime setup; including changes in `src/**`, `config/**`, `db.migration/**`, `Dockerfile`, `docker-compose.yml`, and `docker/**`), QA additionally runs `make build && make up && make component-tests && make sanity-tests && make down`.
 - When in doubt, QA runs the tests.
 - The `QA Agent` status description identifies the checks actually executed and their results, e.g. `docs-only review`, `build passed`, or `build+component+sanity passed`. It includes failures and never implies an unrun check passed.
+- Before reporting success, confirm it applies to the current head SHA and `needs-human-review` is absent. Resolved QA-finding comments do not block auto-merge after current-head success; human comments still block it. Automation must never remove the label.

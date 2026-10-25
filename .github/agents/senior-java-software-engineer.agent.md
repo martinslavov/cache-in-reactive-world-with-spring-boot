@@ -41,19 +41,28 @@ at a time, with production-quality code and tests, and finish by opening a pull 
      `SHA=$(gh pr view <n> -R martinslavov/rcas --json headRefOid -q .headRefOid)` then
      `gh api -X POST repos/martinslavov/rcas/statuses/$SHA -f state=pending -f context="QA Agent" -f description="Waiting for QA"`.
    - Hand over to `senior-qa-engineer`, which reviews and tests the PR and sets `QA Agent` to `success` or `failure`.
-     On `failure`, read its PR comments, fix the bugs, push, set `QA Agent` to pending again and hand over to QA again.
+   - On `failure`, count the QA failure rounds from PR comments, not agent memory. Replace `<pr>` with the PR number:
+     `gh api repos/martinslavov/rcas/issues/<pr>/comments --paginate -q '[.[] | select(.body | contains("<!-- qa-round:"))] | length'`.
+     Each QA failure comment includes one marker `<!-- qa-round:N -->`; QA assigns the next round as the marker count plus one.
+   - For failures below round 5, and for failures after a human has removed the label to resume the loop, read the actionable findings, fix them, push, set `QA Agent` to pending again and hand over to QA.
+   - A round-5 failure is a hard stop: do not make another fix commit or merge. QA applies `needs-human-review` and escalates to the user;
+     leave the PR open. Automated agents never remove this label. Only a human removing it explicitly resumes the loop; retain all markers and derive the next round from them. After that human-approved
+     resumption, continue handling failures normally even though the round number is above 5.
    - Wait for all checks, including `QA Agent`: `gh pr checks <n> -R martinslavov/rcas --watch` (or poll it).
-   - Read the comments and reviews: `gh pr view <n> -R martinslavov/rcas --comments` and
-     `gh api repos/martinslavov/rcas/pulls/<n>/reviews` (also `pulls/<n>/comments` for review comments).
-     Ignore automation comments: the `<!-- pr-tracking-link -->` tracking issue comment and `github-actions` bot comments.
-   - If ALL checks pass, including `QA Agent` = success, and there are no other comments or review comments, merge:
-     `gh pr merge <n> -R martinslavov/rcas --merge --delete-branch`, and report the merge. Merging closes the task issue
-     (`Closes #N`) and the tracking issue, and moves the board item to Done automatically.
-   - If a check fails, investigate, fix and push, then set `QA Agent` to pending and wait for the checks again. If checks
-     (including `QA Agent`) are pending or their state or the comments cannot be determined, do not merge and report it.
-   - If there are comments or reviews, do not merge; report them.
-   - Override: if the user's task says to keep the PR open (e.g. "leave the PR open", "do not merge"), never merge.
-   Report the PR URL, the check results and the merge status.
+   - Before any auto-merge, check the PR labels through the API (do not use `gh pr edit`, which fails with a Projects classic error):
+     `gh api repos/martinslavov/rcas/issues/<pr>/labels -q '.[].name | select(. == "needs-human-review")'`.
+     If the label is present, do not merge; only a human may remove it.
+   - Read the comments and reviews: `gh pr view <n> -R martinslavov/rcas --comments`,
+     `gh api repos/martinslavov/rcas/pulls/<n>/reviews` and `gh api repos/martinslavov/rcas/pulls/<n>/comments`.
+     Human comments (not agents or automation) block auto-merge. Ignore tracking/workflow automation comments. Resolved QA-finding comments
+     do not by themselves block merging when QA succeeds on the current head SHA; unresolved findings still block it.
+   - If ALL checks pass, `QA Agent` is `success` on the current head SHA, `needs-human-review` is absent, and there are no human
+     comments or unresolved findings, merge with `gh pr merge <n> -R martinslavov/rcas --merge --delete-branch` and report it.
+     Merging closes the task issue (`Closes #N`) and the tracking issue, and moves the board item to Done automatically.
+   - If a check fails, investigate and fix only while the label is absent and the iteration limit has not stopped work; push, set
+     `QA Agent` to pending and wait for checks again. If checks/status/comments/labels are pending or cannot be determined, do not merge
+     and report it. Honor an explicit request to keep the PR open.
+   Report the PR URL, head SHA, check results and merge status.
 
 ## Elapsed time
 
