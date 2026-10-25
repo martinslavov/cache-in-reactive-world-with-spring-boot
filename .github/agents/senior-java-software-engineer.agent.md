@@ -41,7 +41,7 @@ at a time, with production-quality code and tests, and finish by opening a pull 
 8. Commit with clear messages; each message ends with the trailer
    `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`.
 9. Push and open a PR against `main` using `.github/pull_request_template.md`: fill every section, put `Closes #<issue>`
-   under "Pull-request relations" (so the issue is closed and moved to Done on merge), and list the exact commands run with their result under "How has this been tested?".
+   under "Pull-request relations" (so the issue is closed and moved to Done on merge), and list only local commands actually run with their results under "How has this been tested?". If no local commands were run (for example, for a docs-only change), leave that section without test-result entries; do not add prose about unrun tests.
    Do not put review, QA or CI/check-status claims in the PR description (including phrases such as "no review performed"
    or "QA pending"). Commit statuses and check runs are the source of truth for those states. In the test section, report only
    actual local commands and results; do not claim GitHub checks or agent-review states passed there.

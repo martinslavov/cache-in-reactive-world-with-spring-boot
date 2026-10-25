@@ -57,7 +57,7 @@ The steps below are what the agents follow:
    Reference the issue from step 1 under "Pull-request relations" as `Closes #N`: GitHub closes it on merge and `PR Issue Close` moves it to Done.
    The `PR Issue Tracking` workflow adds the tracking issue link to the description. Do not put review, QA or CI/check-status
    claims in the PR description (including "no review performed" or "QA pending"); commit statuses and check runs are the
-   source of truth. The testing section may state only actual local commands and their results. Required checks (unit, component and sanity tests and
+   source of truth. The testing section may list only local commands actually run and their results; if none were run, leave it without test-result entries rather than adding prose about unrun tests. Required checks (unit, component and sanity tests and
    both agent statuses) must pass before merging. Right after opening the PR, and after every new push, the engineer sets both agent
    gates to pending:
    `gh api -X POST repos/martinslavov/rcas/statuses/<head-sha> -f state=pending -f context="PR Review" -f description="Waiting for PR review"`

@@ -244,7 +244,7 @@ No agent commits or merges while the label is present. QA uses its own `<!-- qa-
 stop. For issues labelled `architecture-approval-required`, PR Review also checks conformance to the approved design note (material
 deviations are at least major), backward compatibility and, for schema changes, migration and rollback evidence. PR descriptions
 must not claim review, QA or CI/check statuses (for example, "no review performed" or "QA pending"); commit statuses and check
-runs are the source of truth. The test section may list only local commands actually run and their results.
+runs are the source of truth. The test section may list only local commands actually run and their results; if none were run, leave it without test-result entries rather than adding prose about unrun tests.
 
 CI fix attempts are a separate three-attempt loop tracked by `<!-- ci-fix-attempt:N -->` and
 `<!-- ci-failure-signature:<check name>|<test id or normalized error> -->` in PR comments. The engineer reads the failed
