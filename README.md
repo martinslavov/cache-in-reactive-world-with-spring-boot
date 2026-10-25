@@ -182,3 +182,15 @@ git checkout -b feature/my-change
 ```
 
 For real enforcement on GitHub also enable branch protection for `main` (see Settings → Rules).
+
+## Agents and task workflow
+
+Custom agents live in `.github/agents/`:
+
+| Agent | Role |
+|-------|------|
+| `product-owner-agent` | Senior Product Owner: analyzes the input and creates a GitHub issue with acceptance criteria |
+| `senior-java-software-engineer` | Senior Java Software Engineer: implements the issue on a `feature/*` branch, tests it and opens a PR |
+
+Give a task as `TASK-NAME:<name>` followed by the description. The product owner agent creates the issue, then the engineer
+agent implements it and opens the pull request. The rules are in `.github/copilot-instructions.md`.
