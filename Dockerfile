@@ -17,10 +17,10 @@ WORKDIR /app
 ENV JDK_JAVA_OPTIONS="-XX:MaxRAMPercentage=75"
 
 # Copy the service dependencies to the container
-COPY --chown=nonroot:nonroot build/libs/cache-*.jar cache-service.jar
+COPY --chown=nonroot:nonroot build/libs/rcas-*.jar rcas.jar
 
 # Healthcheck helper (the hardened image has no shell or curl)
 COPY --from=healthcheck --chown=nonroot:nonroot /out/HealthCheck.class HealthCheck.class
 
 ## Start application
-ENTRYPOINT ["java", "-jar", "cache-service.jar"]
+ENTRYPOINT ["java", "-jar", "rcas.jar"]

@@ -1,13 +1,13 @@
-name: cache-docker
+name: rcas
 services:
   # ------------------------------
   # PostgreSQL
   # ------------------------------
   postgres:
     image: postgres:15.2
-    container_name: cache-postgres
+    container_name: rcas-postgres
     networks:
-      - cache-docker-network
+      - rcas-docker-network
     ports:
       - "5432:5432"
     environment:
@@ -30,9 +30,9 @@ services:
   # ------------------------------
   redis:
     image: redis:7
-    container_name: cache-redis
+    container_name: rcas-redis
     networks:
-      - cache-docker-network
+      - rcas-docker-network
     ports:
       - "6379:6379"
     healthcheck:
@@ -45,11 +45,11 @@ services:
   # Cache service (requires: gradle bootJar)
   # Started only with: docker compose --profile app up
   # ------------------------------
-  cache-service:
+  rcas:
     profiles: ["app"]
-    container_name: cache-service
+    container_name: rcas
     networks:
-      - cache-docker-network
+      - rcas-docker-network
     build:
       context: .
       dockerfile: Dockerfile
@@ -76,5 +76,5 @@ services:
       retries: 10
 
 networks:
-  cache-docker-network:
-    name: cache-docker-network
+  rcas-docker-network:
+    name: rcas-docker-network

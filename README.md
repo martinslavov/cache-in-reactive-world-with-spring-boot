@@ -1,4 +1,4 @@
-# cache-in-reactive-world-with-spring-boot
+# RCAS – Reactive CAche Service
 
 Reactive Spring Boot (WebFlux) service that demonstrates two cache layers: an in-memory Caffeine cache and a Redis cache, on top of a PostgreSQL database accessed through R2DBC.
 
@@ -20,7 +20,7 @@ Reactive Spring Boot (WebFlux) service that demonstrates two cache layers: an in
 
 ```bash
 ./gradlew clean build        # compile + run all tests
-./gradlew bootJar            # only build the executable jar (build/libs/cache-0.0.1-SNAPSHOT.jar)
+./gradlew bootJar            # only build the executable jar (build/libs/rcas-0.0.1-SNAPSHOT.jar)
 ```
 
 The tests use Testcontainers, so Docker must be running.
@@ -34,9 +34,9 @@ The tests use Testcontainers, so Docker must be running.
 | Command | What starts |
 |---------|-------------|
 | `docker compose up -d` | Only the infrastructure: PostgreSQL and Redis |
-| `docker compose --profile app up -d` | Infrastructure and the `cache-service` application |
+| `docker compose --profile app up -d` | Infrastructure and the `rcas` application |
 
-`cache-service` belongs to the `app` profile, so it is **not** started by default. This lets you run the dependencies in Docker and start the service yourself from the IDE.
+`rcas` belongs to the `app` profile, so it is **not** started by default. This lets you run the dependencies in Docker and start the service yourself from the IDE.
 
 Stop everything (the `--profile app` flag is needed to also stop the service):
 
@@ -74,9 +74,9 @@ The `dev` profile connects to PostgreSQL on `127.0.0.1:5432` (`testdb`, user and
 |---------|-------|------|-------|
 | `postgres` | `postgres:15.2` | 5432 | `db.migration/init.sql`, `V2__InsertUser.sql` and `V3__InsertSubscription.sql` run on first start |
 | `redis` | `redis:7` | 6379 | |
-| `cache-service` | built from `Dockerfile` | 8080 | profile `app` |
+| `rcas` | built from `Dockerfile` | 8080 | profile `app` |
 
-All containers share the `cache-docker-network` network. The Compose project name is `cache-docker`.
+All containers share the `rcas-docker-network` network. The Compose project name is `rcas`.
 
 The database scripts run only when the Postgres container is created for the first time. After changing them, recreate the data with `docker compose --profile app down -v`.
 
@@ -93,7 +93,7 @@ Setting the variable replaces the default from the Dockerfile (`-XX:MaxRAMPercen
 
 ## Health check
 
-Because the hardened image has no shell or `curl`, the container health check runs a tiny precompiled Java class (`docker/HealthCheck.java`) against the actuator endpoint. `docker compose ps` shows `cache-service` as `healthy` when it succeeds.
+Because the hardened image has no shell or `curl`, the container health check runs a tiny precompiled Java class (`docker/HealthCheck.java`) against the actuator endpoint. `docker compose ps` shows `rcas` as `healthy` when it succeeds.
 
 ## Endpoints
 
