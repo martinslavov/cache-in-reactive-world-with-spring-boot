@@ -128,11 +128,13 @@ Integration tests start PostgreSQL through Testcontainers, so they need a runnin
 
 ### Component tests
 
-Component tests (`src/componentTest`) call the running service over HTTP, so they exercise the whole stack: the RCAS image, PostgreSQL and Redis. They are not part of `./gradlew build`.
+Component tests live in the separate Gradle subproject `component-tests`. They call the running service over HTTP, so they exercise the whole stack: the RCAS image, PostgreSQL and Redis. They do not depend on the application code and are not run by `./gradlew build` (it only compiles them).
 
 ```bash
-make up                # build the jar and image, start the stack and wait until it is healthy
-make component-tests   # ./gradlew componentTest against http://localhost:8080/app
+make build             # build the jar used by the Docker image
+make up                # build the image, start the stack and wait until it is healthy
+make component-tests   # ./gradlew :component-tests:componentTest against http://localhost:8080/app
+make sanity-tests      # only the fast sanity (smoke) tests (@Tag("sanity"))
 make down              # stop the stack and remove containers, network and volumes
 ```
 
@@ -146,6 +148,7 @@ Workflows live in `.github/workflows`:
 |----------|---------|--------------|
 | `ci-unit-tests.yml` (CI Unit Tests) | pull request, push to `main`, manual | `./gradlew build` on JDK 25: compiles, runs unit and integration tests, uploads the test report |
 | `ci-component-tests.yml` (CI Component Tests) | pull request, push to `main`, manual | Builds the image, starts the stack with docker compose (`make up`), runs the component tests, collects the logs and tears everything down (`make down`) |
+| `ci-sanity-tests.yml` (CI Sanity Tests) | pull request, push to `main`, manual | Starts the stack with docker compose and runs only the fast sanity tests (`make sanity-tests`) |
 | `ci-release.yml` (CI Release) | push of a tag `v*` | Builds, runs the tests and creates a GitHub release with the executable jar and generated release notes |
 | `ci-code-review.yml` (CodeQL) | pull request and push to `main`, weekly | Static security analysis, results appear in the Security tab |
 | `ci-pr-issue-tracking.yml` (PR Issue Tracking) | pull request opened | Creates one tracking issue per PR (found again by a hidden marker, so it is never duplicated) and links it in a PR comment |

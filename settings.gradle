@@ -1,1 +1,4 @@
 rootProject.name = 'rcas'
+
+// Component and sanity tests that call the running service over HTTP (see component-tests/build.gradle)
+include 'component-tests'

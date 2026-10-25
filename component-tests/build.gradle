@@ -1,0 +1,60 @@
+// Component and sanity tests that call the running service over HTTP (local docker compose stack or a
+// deployed environment, see RCAS_BASE_URL). They do not depend on the application code.
+plugins {
+	id 'java'
+	id 'io.spring.dependency-management'
+}
+
+java {
+	sourceCompatibility = JavaVersion.VERSION_25
+}
+
+repositories {
+	mavenCentral()
+}
+
+// Keep library versions aligned with the service through the Spring Boot BOM
+dependencyManagement {
+	imports {
+		mavenBom org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES
+	}
+}
+
+dependencies {
+	testImplementation "org.junit.jupiter:junit-jupiter"
+	testImplementation "tools.jackson.core:jackson-databind"
+	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+jar {
+	enabled = false
+}
+
+// The tests need a running service, so `build` only compiles them; run them with componentTest or sanityTest
+tasks.named('test') {
+	enabled = false
+}
+
+def stackTest = { Test task ->
+	task.group = 'verification'
+	task.testClassesDirs = sourceSets.test.output.classesDirs
+	task.classpath = sourceSets.test.runtimeClasspath
+	task.testLogging {
+		events 'passed', 'failed', 'skipped'
+	}
+	task.outputs.upToDateWhen { false }
+}
+
+tasks.register('componentTest', Test) {
+	description = 'Runs component tests against the running service.'
+	stackTest(it)
+	useJUnitPlatform()
+}
+
+tasks.register('sanityTest', Test) {
+	description = 'Runs only the fast sanity (smoke) tests against the running service.'
+	stackTest(it)
+	useJUnitPlatform {
+		includeTags 'sanity'
+	}
+}

@@ -49,6 +49,9 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Build application jar
+        run: make build
+
       - name: Execute infrastructure up command
         run: make up
 
@@ -69,7 +72,7 @@ jobs:
         with:
           name: component-tests-reports
           path: |
-            build/reports/tests/componentTest/
-            build/test-results/componentTest/
+            component-tests/build/reports/tests/componentTest/
+            component-tests/build/test-results/componentTest/
             infra-logs.txt
           if-no-files-found: ignore
