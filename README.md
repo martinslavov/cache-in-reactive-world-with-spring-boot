@@ -283,3 +283,11 @@ issue (`Closes #N`) and the tracking issue and moves the board item to Done. A f
 At the end of every task the agent reports the total elapsed time from the user's input until everything is merged and all agents are done.
 The main (orchestrating) agent records the start with `date +%s` at the beginning of the task and computes the difference at the end
 (see `.github/copilot-instructions.md`).
+
+
+### Agent run records and dashboard
+
+Each agent appends one versioned, secret-free `<!-- agent-run: {{...}} -->` JSON comment at the end of its run. The schema,
+UTC timestamp requirements and failure-source definitions are in `.github/copilot-instructions.md`. The scheduled
+`Agent Workflow Dashboard` aggregates issue/PR comments; its single issue is identified by `<!-- agent-dashboard -->` and
+excluded from the task board. If automatic pinning is denied, a repository owner pins the created dashboard once.

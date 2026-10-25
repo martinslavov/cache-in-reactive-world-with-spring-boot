@@ -146,3 +146,24 @@ At the very beginning of every task the main (orchestrating) agent records the s
 At the end, after everything is merged and all agents are done, it runs `date +%s` again and the final report to the user MUST state the total
 elapsed time (end minus start, as minutes and seconds) from the user's input until everything is merged and all agents have finished.
 Sub-agents report their own durations to the main agent when asked; the total is always computed by the main agent.
+
+
+## Agent run records
+
+Every agent run must append exactly one hidden, single-line JSON record to its durable GitHub comment before it finishes.
+Product Owner and Architect post on the task issue; Engineer, PR Review, QA and DoD post on the PR. Use
+`date -u +%Y-%m-%dT%H:%M:%SZ` for the UTC `start` and `end` timestamps and `date +%s` at both points to compute
+`duration_s` as elapsed whole seconds. Post via `gh issue comment <issue-or-pr-number> -R martinslavov/rcas --body '<marker>'`.
+For issue-only runs with no PR or head commit, use `null` for `pr` and/or `sha`. Use the same issue number throughout
+the task. Capture only actual failed check names and retries performed by that agent; never include secrets, credentials,
+tokens, or sensitive comment excerpts. A skipped or successful run has `failure_source: null`; failure/escalation runs
+classify the primary cause as `po`, `implementation`, `tests`, or `infrastructure`.
+
+The exact marker shape is `<!-- agent-run: {"v":1,"agent":"<agent-id>","issue":63,"pr":64,"sha":"<head-sha>","start":"2026-10-25T20:00:00Z","end":"2026-10-25T20:07:30Z","duration_s":450,"checks_failed":["unit-tests"],"retries":1,"status":"failure","failure_source":"tests"} -->`. Required fields are `v` (currently `1`), `agent`, positive `issue`, `pr` (positive number or `null`), `sha` (string or `null`), UTC ISO-8601 `start`/`end`, non-negative integer `duration_s`/`retries`, `checks_failed` (array of check names), `status` (`success`, `failure`, `skipped`, `escalated`), and `failure_source` (`po`, `implementation`, `tests`, `infrastructure`, or `null`). `failure_source` is non-null for `failure`/`escalated` and null for `success`/`skipped`.
+
+Failure source means: `po` for unclear, missing or changed acceptance criteria; `implementation` for code/design defects;
+`tests` for failing or missing tests/evidence; and `infrastructure` for runner, Docker, network or GitHub outages. The
+dashboard deduplicates exact replays using `(agent, issue, pr, sha, start, end)`; timestamps make legitimate reruns distinct.
+The dashboard is a derived view from all issue/PR comments and can be regenerated. It updates the one issue containing
+`<!-- agent-dashboard -->`; this issue must not be added to the task board. If the workflow log warns that its token cannot
+pin the issue, an owner must pin it once with `gh issue pin <dashboard-issue-number> -R martinslavov/rcas`.

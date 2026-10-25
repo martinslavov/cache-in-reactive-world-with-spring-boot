@@ -79,3 +79,15 @@ Use `blocker` for a severe defect or data/security loss, `major` for a significa
 architecture defect, `minor` for a non-blocking quality or test gap, and `nit` for a small optional improvement. Include `file:line`
 whenever a changed line can be identified. Only blocker/major findings set status to failure; minor/nit findings remain visible in
 the summary and do not block QA.
+
+
+## Agent run record (required)
+
+At the start of every run, record UTC start time and epoch seconds with `date -u +%Y-%m-%dT%H:%M:%SZ` and `date +%s`.
+Before ending, record both values again, calculate `duration_s` from the epoch values, and post exactly one hidden,
+single-line `<!-- agent-run: {...} -->` JSON record using the schema and constraints in `.github/copilot-instructions.md`.
+Use agent id `pr-review-agent`, the task issue number, and the current PR number/head SHA (use `null` when there is no PR or SHA).
+This agent posts its record on the PR issue number with `gh issue comment <number> -R martinslavov/rcas --body '<marker>'`.
+Include only actual failed checks and retries performed during this run; set status to `success`, `failure`, `skipped`, or
+`escalated`. For `failure` or `escalated`, classify the primary cause as implementation for defects, tests for missing test coverage, infrastructure for external outages, or po for unclear/changed criteria; use `failure_source: null` for
+`success` or `skipped`. Never put secrets, credentials, tokens, or sensitive excerpts in the record.

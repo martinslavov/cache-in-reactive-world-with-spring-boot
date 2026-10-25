@@ -1,0 +1,10 @@
+[
+  {
+    "id": 3,
+    "body": "<!-- agent-run: {\"v\":1,\"agent\":\"qa\",\"issue\":63,\"pr\":64,\"start\":\"not-a-date\"} -->"
+  },
+  {
+    "id": 4,
+    "body": "<!-- agent-run: {not valid json} -->"
+  }
+]
