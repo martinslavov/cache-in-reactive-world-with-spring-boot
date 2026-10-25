@@ -1,6 +1,6 @@
 # Code review guidelines
 
-Source of the static review rules: `config/checkstyle/checkstyle.xml` implements the automatable parts and is run by the
+Source of the static review rules: `.github/checkstyle/checkstyle.xml` implements the automatable parts and is run by the
 `CI Static Review` workflow (`./gradlew checkstyleMain checkstyleTest`) on every pull request. The rest is for human reviewers.
 
 ## Project context

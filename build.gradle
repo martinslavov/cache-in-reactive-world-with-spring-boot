@@ -102,10 +102,11 @@ tasks.named('check') {
 	dependsOn tasks.named('jacocoTestCoverageVerification')
 }
 
-// Static code review rules (config/checkstyle/checkstyle.xml); run in CI by the CI Static Review workflow
+// Static code review rules (.github/checkstyle/checkstyle.xml); run in CI by the CI Static Review workflow
 checkstyle {
 	toolVersion = '11.0.0'
-	configFile = file('config/checkstyle/checkstyle.xml')
+	configDirectory = file('.github/checkstyle')
+	configFile = file('.github/checkstyle/checkstyle.xml')
 	maxWarnings = 0
 }
 

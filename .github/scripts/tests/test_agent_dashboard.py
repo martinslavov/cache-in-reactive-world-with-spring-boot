@@ -3,7 +3,7 @@ import json
 import pathlib
 import unittest
 
-from scripts.agent_dashboard import (
+from agent_dashboard import (
     DASHBOARD_MARKER, GitHubClient, is_dashboard, parse_comments, render_dashboard, validate_record,
 )
 
@@ -109,7 +109,7 @@ class AgentDashboardTests(unittest.TestCase):
         self.assertIn("| **Total classified failures** | 0 | 0.0% |", markdown)
 
     def test_every_agent_documents_run_record_posting(self):
-        root = pathlib.Path(__file__).resolve().parents[2]
+        root = pathlib.Path(__file__).resolve().parents[3]
         agent_names = {
             "product-owner-agent", "architect-agent", "senior-java-software-engineer",
             "pr-review-agent", "senior-qa-engineer", "dod-validator-agent",
@@ -124,7 +124,7 @@ class AgentDashboardTests(unittest.TestCase):
                 self.assertIn("gh issue comment", content)
 
     def test_dashboard_and_board_workflows_have_expected_guards_and_permissions(self):
-        root = pathlib.Path(__file__).resolve().parents[2]
+        root = pathlib.Path(__file__).resolve().parents[3]
         dashboard = (root / ".github/workflows/ci-agent-dashboard.yml").read_text(encoding="utf-8")
         board = (root / ".github/workflows/ci-issue-board.yml").read_text(encoding="utf-8")
         # No YAML parser in the stdlib: check top-level blocks by indentation instead of substrings.
@@ -188,7 +188,7 @@ class AgentDashboardTests(unittest.TestCase):
             FakeClient().publish("o/r", 7, "body", create=True)
 
     def test_workflow_passes_configured_issue_and_never_creates(self):
-        root = pathlib.Path(__file__).resolve().parents[2]
+        root = pathlib.Path(__file__).resolve().parents[3]
         workflow = (root / ".github/workflows/ci-agent-dashboard.yml").read_text(encoding="utf-8")
         self.assertIn("AGENT_DASHBOARD_ISSUE: ${{ vars.AGENT_DASHBOARD_ISSUE }}", workflow)
         self.assertNotIn("--create", workflow)
