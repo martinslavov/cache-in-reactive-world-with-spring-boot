@@ -107,8 +107,8 @@ jobs:
             core.info(`Tracking issue: #${issue.number}`);
 
       - name: Add tracking issue to RCAS Tracking board
-        uses: actions/add-to-project@v2.0.0
-        with:
-          project-url: https://github.com/users/martinslavov/projects/1
-          github-token: ${{ secrets.PROJECT_TOKEN }}
-          content-url: ${{ steps.tracking.outputs.issue-url }}
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ISSUE_URL: ${{ steps.tracking.outputs.issue-url }}
+        run: |
+          gh project item-add 1 --owner martinslavov --url "$ISSUE_URL"
