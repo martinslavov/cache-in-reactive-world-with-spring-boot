@@ -289,5 +289,5 @@ The main (orchestrating) agent records the start with `date +%s` at the beginnin
 
 Each agent appends one versioned, secret-free `<!-- agent-run: {{...}} -->` JSON comment at the end of its run. The schema,
 UTC timestamp requirements and failure-source definitions are in `.github/copilot-instructions.md`. The
-`Agent Workflow Dashboard` (runs on every push to `main`, daily, and manually from `main`; never on `pull_request`/forks) aggregates issue/PR comments; its single issue is identified by `<!-- agent-dashboard -->` and
+`Agent Workflow Dashboard` (runs on every push to `main`, daily, and manually from `main`; never on `pull_request`/forks) aggregates issue/PR comments. Its single issue is explicit configuration: the repository Actions variable `AGENT_DASHBOARD_ISSUE` holds its issue number (the job fails with a clear error if unset; there is no fallback and the workflow never creates issues). The script updates (and reopens if closed) exactly that issue after verifying it starts with `<!-- agent-dashboard -->`. One-time bootstrap: `GH_TOKEN=... python3 scripts/agent_dashboard.py --repo martinslavov/rcas --create`, then `gh variable set AGENT_DASHBOARD_ISSUE -b <number> -R martinslavov/rcas`. The dashboard issue is
 excluded from the task board. If automatic pinning is denied, a repository owner pins the created dashboard once.

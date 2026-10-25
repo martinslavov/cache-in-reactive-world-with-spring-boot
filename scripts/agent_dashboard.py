@@ -20,6 +20,7 @@ from typing import Any, Callable, Iterable
 API_ROOT = "https://api.github.com"
 DASHBOARD_TITLE = "Agent Workflow Dashboard"
 DASHBOARD_MARKER = "<!-- agent-dashboard -->"
+ISSUE_ENV = "AGENT_DASHBOARD_ISSUE"
 AGENTS = ("po", "implementation", "tests", "infrastructure")
 STATUSES = {"success", "failure", "skipped", "escalated"}
 FAILURE_SOURCES = set(AGENTS)
@@ -205,12 +206,9 @@ def render_dashboard(
     return "\n".join(lines) + "\n"
 
 
-def find_dashboard(issues: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
-    """The dashboard is an issue (never a PR) whose body starts with the marker; quoting it elsewhere does not count.
-    If duplicates exist, the oldest wins so every run converges on the same issue."""
-    matches = [item for item in issues if "pull_request" not in item
-               and (item.get("body") or "").lstrip().startswith(DASHBOARD_MARKER)]
-    return min(matches, key=lambda item: item.get("number", 0), default=None)
+def is_dashboard(issue: dict[str, Any]) -> bool:
+    """A dashboard is an issue (never a PR) whose body starts with the marker; quoting it elsewhere does not count."""
+    return "pull_request" not in issue and (issue.get("body") or "").lstrip().startswith(DASHBOARD_MARKER)
 
 
 class GitHubClient:
@@ -249,18 +247,28 @@ class GitHubClient:
             url = next_link.group(1) if next_link else ""
         return results
 
-    def publish(self, repo: str, issues: list[dict[str, Any]], body: str) -> str:
-        dashboard = find_dashboard(issues)
-        if dashboard is None:
+    def publish(self, repo: str, number: int | None, body: str, create: bool = False) -> str:
+        """Update exactly issue `number` (verifying the marker); create a new issue only when `create` is set."""
+        if create:
+            if number is not None:
+                raise RuntimeError("--create must not be combined with an existing dashboard issue number")
             dashboard, _ = self.request("POST", f"{API_ROOT}/repos/{repo}/issues", {
                 "title": DASHBOARD_TITLE, "body": body,
             })
             action = "created"
         else:
+            if number is None:
+                raise RuntimeError(f"{ISSUE_ENV} is not configured; set it to the dashboard issue number "
+                                   "(one-time bootstrap: run with --create)")
+            url = f"{API_ROOT}/repos/{repo}/issues/{number}"
+            current, _ = self.request("GET", url)
+            if not isinstance(current, dict) or not is_dashboard(current):
+                raise RuntimeError(f"issue #{number} is not the agent dashboard (missing {DASHBOARD_MARKER} marker); "
+                                   "refusing to overwrite it")
             updates: dict[str, Any] = {"body": body}
-            if dashboard.get("state") != "open":
+            if current.get("state") != "open":
                 updates["state"] = "open"
-            dashboard, _ = self.request("PATCH", dashboard["url"], updates)
+            dashboard, _ = self.request("PATCH", url, updates)
             action = "updated"
         self.pin_if_possible(dashboard)
         return f"Dashboard issue {action}: {dashboard['html_url']}"
@@ -298,7 +306,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"), help="owner/repository")
     parser.add_argument("--dry-run", action="store_true", help="print the rendered dashboard without writing")
+    parser.add_argument("--issue", default=os.environ.get(ISSUE_ENV, "").strip() or None,
+                        help=f"dashboard issue number (default: ${ISSUE_ENV})")
+    parser.add_argument("--create", action="store_true",
+                        help="one-time bootstrap: create the dashboard issue instead of updating; never used by the workflow")
     args = parser.parse_args(argv)
+    if args.issue is not None and not re.fullmatch(r"[1-9][0-9]*", args.issue):
+        parser.error(f"{ISSUE_ENV}/--issue must be a positive integer")
     if not args.repo or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", args.repo):
         parser.error("--repo or GITHUB_REPOSITORY must be owner/repository")
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
@@ -306,13 +320,13 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("GH_TOKEN or GITHUB_TOKEN is required to read repository comments")
     try:
         client = GitHubClient(token)
-        issues, comments = collect(args.repo, client)
+        _, comments = collect(args.repo, client)
         records = parse_comments(comment for item in comments.values() for comment in item)
         body = render_dashboard(records, comments)
         if args.dry_run:
             print(body, end="")
         else:
-            print(client.publish(args.repo, issues, body))
+            print(client.publish(args.repo, int(args.issue) if args.issue else None, body, args.create))
     except RuntimeError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

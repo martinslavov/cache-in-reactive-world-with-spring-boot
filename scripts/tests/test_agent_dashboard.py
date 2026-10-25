@@ -4,7 +4,7 @@ import pathlib
 import unittest
 
 from scripts.agent_dashboard import (
-    DASHBOARD_MARKER, GitHubClient, find_dashboard, parse_comments, render_dashboard, validate_record,
+    DASHBOARD_MARKER, GitHubClient, is_dashboard, parse_comments, render_dashboard, validate_record,
 )
 
 
@@ -28,13 +28,16 @@ def top_level_block(text, key):
 
 
 class FakeClient(GitHubClient):
-    def __init__(self, pages=None):
+    def __init__(self, pages=None, issues=None):
         super().__init__("token")
         self.pages = pages or {}
+        self.issues = issues or {}
         self.calls = []
 
     def request(self, method, url, payload=None):
         self.calls.append((method, url, payload))
+        if method == "GET" and url in self.issues:
+            return self.issues[url], {}
         if method == "GET":
             body, link = self.pages[url]
             return body, ({"Link": f'<{link}>; rel="next"'} if link else {})
@@ -142,30 +145,58 @@ class AgentDashboardTests(unittest.TestCase):
         self.assertEqual([1, 2, 3], client.get_all("u1"))
         self.assertEqual(["u1", "u2"], [call[1] for call in client.calls])
 
-    def test_publish_creates_when_missing_and_updates_in_place(self):
-        client = FakeClient()
-        self.assertIn("created", client.publish("o/r", [{"number": 1, "body": "other"}], "body"))
-        self.assertEqual("POST", client.calls[0][0])
-        client = FakeClient()
-        existing = {"number": 7, "url": "https://api/7", "state": "open", "body": DASHBOARD_MARKER + "\nold"}
-        self.assertIn("updated", client.publish("o/r", [existing], "new"))
-        writes = [call for call in client.calls if call[0] in {"POST", "PATCH"} and "graphql" not in call[1]]
-        self.assertEqual([("PATCH", "https://api/7", {"body": "new"})], writes)
+    ISSUE_URL = "https://api.github.com/repos/o/r/issues/7"
+
+    def dashboard_client(self, **fields):
+        issue = {"number": 7, "html_url": "https://x/7", "node_id": "N", "state": "open",
+                 "body": DASHBOARD_MARKER + "\nold", **fields}
+        return FakeClient(issues={self.ISSUE_URL: issue})
+
+    def writes(self, client):
+        return [call for call in client.calls if call[0] in {"POST", "PATCH"} and "graphql" not in call[1]]
+
+    def test_publish_updates_explicit_issue_in_place_without_listing(self):
+        client = self.dashboard_client()
+        self.assertIn("updated", client.publish("o/r", 7, "new"))
+        self.assertEqual([("PATCH", self.ISSUE_URL, {"body": "new"})], self.writes(client))
+        self.assertEqual([("GET", self.ISSUE_URL)], [c[:2] for c in client.calls if c[0] == "GET"])
 
     def test_publish_reopens_closed_dashboard(self):
-        client = FakeClient()
-        closed = {"number": 7, "url": "https://api/7", "state": "closed", "body": DASHBOARD_MARKER}
-        client.publish("o/r", [closed], "new")
-        self.assertEqual({"body": "new", "state": "open"}, client.calls[0][2])
+        client = self.dashboard_client(state="closed")
+        client.publish("o/r", 7, "new")
+        self.assertEqual({"body": "new", "state": "open"}, self.writes(client)[0][2])
 
-    def test_dashboard_lookup_ignores_pull_requests_and_quoted_markers(self):
-        quoted = {"number": 1, "body": f"mentions {DASHBOARD_MARKER} in prose"}
-        pull = {"number": 2, "body": DASHBOARD_MARKER, "pull_request": {}}
-        real = {"number": 3, "body": DASHBOARD_MARKER + "\n# Agent Workflow Dashboard"}
-        self.assertIsNone(find_dashboard([quoted, pull]))
-        self.assertIs(real, find_dashboard([quoted, pull, real]))
-        newer = {"number": 9, "body": DASHBOARD_MARKER}
-        self.assertIs(real, find_dashboard([newer, real]))
+    def test_publish_refuses_issue_without_marker_or_pull_request(self):
+        for fields in ({"body": "someone else's issue"}, {"body": f"quote {DASHBOARD_MARKER}"},
+                       {"pull_request": {}}):
+            client = self.dashboard_client(**fields)
+            with self.assertRaisesRegex(RuntimeError, "not the agent dashboard"):
+                client.publish("o/r", 7, "new")
+            self.assertEqual([], self.writes(client))
+
+    def test_publish_without_number_fails_and_never_creates(self):
+        client = FakeClient()
+        with self.assertRaisesRegex(RuntimeError, "AGENT_DASHBOARD_ISSUE is not configured"):
+            client.publish("o/r", None, "new")
+        self.assertEqual([], client.calls)
+
+    def test_publish_creates_only_with_explicit_create_flag(self):
+        client = FakeClient()
+        self.assertIn("created", client.publish("o/r", None, "body", create=True))
+        self.assertEqual("POST", self.writes(client)[0][0])
+        with self.assertRaises(RuntimeError):
+            FakeClient().publish("o/r", 7, "body", create=True)
+
+    def test_workflow_passes_configured_issue_and_never_creates(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/ci-agent-dashboard.yml").read_text(encoding="utf-8")
+        self.assertIn("AGENT_DASHBOARD_ISSUE: ${{ vars.AGENT_DASHBOARD_ISSUE }}", workflow)
+        self.assertNotIn("--create", workflow)
+
+    def test_dashboard_detection_ignores_pull_requests_and_quoted_markers(self):
+        self.assertFalse(is_dashboard({"body": f"mentions {DASHBOARD_MARKER} in prose"}))
+        self.assertFalse(is_dashboard({"body": DASHBOARD_MARKER, "pull_request": {}}))
+        self.assertTrue(is_dashboard({"body": DASHBOARD_MARKER + "\n# Agent Workflow Dashboard"}))
 
 
 if __name__ == "__main__":
