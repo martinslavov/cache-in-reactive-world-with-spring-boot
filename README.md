@@ -215,13 +215,17 @@ Custom agents live in `.github/agents/`:
 |-------|------|
 | `product-owner-agent` | Senior Product Owner: analyzes the input and creates a GitHub issue with acceptance criteria |
 | `senior-java-software-engineer` | Senior Java Software Engineer: implements the issue on a `feature/*` branch, tests it and opens a PR |
+| `senior-qa-engineer` | Senior QA Engineer: reviews and tests the PR, reports bugs and sets the `QA Agent` commit status |
 
 Give a task as `TASK-NAME:<name>` followed by the description. The product owner agent creates the issue, then the engineer
-agent implements it and opens the pull request. The rules are in `.github/copilot-instructions.md`.
+agent implements it and opens the pull request, and the QA agent verifies it (Product Owner → Engineer → QA → merge). The rules are in `.github/copilot-instructions.md`.
 
-By default the engineer agent merges the PR itself (merge commit, branch deleted) once all checks pass and the PR has no comments
+By default the engineer agent merges the PR itself (merge commit, branch deleted) once all checks, including `QA Agent`, pass and the PR has no comments
 or reviews other than the automated tracking comment. Merging closes the task issue (`Closes #N`) and the tracking issue and moves
 the board item to Done. A failing, pending or unknown check, or any comment/review, blocks the merge and is reported instead.
+The engineer sets the `QA Agent` commit status to `pending` right after opening the PR and after every push
+(`gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=pending -f context="QA Agent" -f description="Waiting for QA"`);
+the QA agent sets it to `success` or `failure`. `QA Agent` is a required status check of the `Main protection` ruleset.
 Add e.g. "leave the PR open" or "do not merge" to the task to keep the PR open.
 
 ## Task reports: elapsed time
