@@ -232,7 +232,7 @@ By default the engineer agent merges the PR itself (merge commit, branch deleted
 or reviews other than the automated tracking comment. Merging closes the task issue (`Closes #N`) and the tracking issue and moves
 the board item to Done. A failing, pending or unknown check, or any comment/review, blocks the merge and is reported instead.
 The engineer sets the `QA Agent` commit status to `pending` right after opening the PR and after every push
-(`gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=pending -f context="QA Agent" -f description="Waiting for QA");
+(`gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=pending -f context="QA Agent" -f description="Waiting for QA");`
 the QA agent sets it to `success` or `failure`. `QA Agent` is a required status check of the `Main protection` ruleset.
 Add e.g. "leave the PR open" or "do not merge" to the task to keep the PR open.
 
