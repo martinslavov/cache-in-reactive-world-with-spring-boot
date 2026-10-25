@@ -58,7 +58,7 @@ jobs:
                   `**Pull Request:** [#${pr.number}](${pr.html_url})`,
                   `**Author:** @${pr.user.login}`,
                   '',
-                  '### Description',
+                  '### Pull Request details',
                   pr.body || 'No description provided.',
                   '',
                   '### Checklist',
