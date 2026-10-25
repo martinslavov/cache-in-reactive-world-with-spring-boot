@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   add-to-board:
+    if: ${{ !contains(github.event.issue.body, '<!-- agent-dashboard -->') }}
     runs-on: ubuntu-latest
 
     steps:

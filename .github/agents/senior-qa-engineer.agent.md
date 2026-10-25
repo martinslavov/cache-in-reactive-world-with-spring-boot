@@ -69,3 +69,15 @@ You do not change production code; you may add or improve tests. PR Review is a 
 ## Required checks
 
 The `Main protection` ruleset currently requires: `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review`, `secret-scan` and `PR Review`. `PR Review` must be `success` on the current head SHA before QA or merge; `Definition of Done` (validated after QA, added to the ruleset after it first reports) must be `success` on the current head SHA before merge. **No agent may merge unless every ruleset-required check and all agent statuses (`PR Review`, `QA Agent`, `Definition of Done`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge). QA must not set `QA Agent` to `success` while another required check is failing on the head SHA. After QA succeeds, `dod-validator-agent` runs next (… → QA → DoD → merge).
+
+
+## Agent run record (required)
+
+At the start of every run, record UTC start time and epoch seconds with `date -u +%Y-%m-%dT%H:%M:%SZ` and `date +%s`.
+Before ending, record both values again, calculate `duration_s` from the epoch values, and post exactly one hidden,
+single-line `<!-- agent-run: {...} -->` JSON record using the schema and constraints in `.github/copilot-instructions.md`.
+Use agent id `senior-qa-engineer`, the task issue number, and the current PR number/head SHA (use `null` when there is no PR or SHA).
+This agent posts its record on the PR issue number with `gh issue comment <number> -R martinslavov/rcas --body '<marker>'`.
+Include only actual failed checks and retries performed during this run; set status to `success`, `failure`, `skipped`, or
+`escalated`. For `failure` or `escalated`, classify the primary cause as tests for failing/missing tests, implementation for code defects, infrastructure for external outages, or po for unclear/changed criteria; use `failure_source: null` for
+`success` or `skipped`. Never put secrets, credentials, tokens, or sensitive excerpts in the record.

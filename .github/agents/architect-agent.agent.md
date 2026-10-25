@@ -59,3 +59,15 @@ Skip the design note for either of these cases:
 
 If neither criterion clearly applies, write the design note. Even when skipped, post the auditable issue comment with the
 matching criterion and `skipped: <reason>`; do not silently skip. The approval triggers still apply whenever present.
+
+
+## Agent run record (required)
+
+At the start of every run, record UTC start time and epoch seconds with `date -u +%Y-%m-%dT%H:%M:%SZ` and `date +%s`.
+Before ending, record both values again, calculate `duration_s` from the epoch values, and post exactly one hidden,
+single-line `<!-- agent-run: {...} -->` JSON record using the schema and constraints in `.github/copilot-instructions.md`.
+Use agent id `architect-agent`, the task issue number, and the current PR number/head SHA (use `null` when there is no PR or SHA).
+This agent posts its record on the task issue with `gh issue comment <number> -R martinslavov/rcas --body '<marker>'`.
+Include only actual failed checks and retries performed during this run; set status to `success`, `failure`, `skipped`, or
+`escalated`. For `failure` or `escalated`, classify the primary cause as po when requirements or acceptance criteria prevent a sound design; otherwise use implementation for a design defect; use `failure_source: null` for
+`success` or `skipped`. Never put secrets, credentials, tokens, or sensitive excerpts in the record.

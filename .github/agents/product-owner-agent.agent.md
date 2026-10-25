@@ -40,3 +40,15 @@ PostgreSQL over R2DBC). You turn a raw request into a clear, small, testable bac
 The main (orchestrating) agent records the start time with `date +%s` when it receives the user's input and computes the total
 elapsed time at the end (from the user's input until everything is merged and all agents are done); the final report to the user
 must state it. When you are the last step, include in your report how long your own work took (`date +%s` at start and end) so the main agent can report the total.
+
+
+## Agent run record (required)
+
+At the start of every run, record UTC start time and epoch seconds with `date -u +%Y-%m-%dT%H:%M:%SZ` and `date +%s`.
+Before ending, record both values again, calculate `duration_s` from the epoch values, and post exactly one hidden,
+single-line `<!-- agent-run: {...} -->` JSON record using the schema and constraints in `.github/copilot-instructions.md`.
+Use agent id `product-owner-agent`, the task issue number, and the current PR number/head SHA (use `null` when there is no PR or SHA).
+This agent posts its record on the task issue with `gh issue comment <number> -R martinslavov/rcas --body '<marker>'`.
+Include only actual failed checks and retries performed during this run; set status to `success`, `failure`, `skipped`, or
+`escalated`. For `failure` or `escalated`, classify the primary cause as po when task definition or acceptance criteria are unclear or incomplete; use `failure_source: null` for
+`success` or `skipped`. Never put secrets, credentials, tokens, or sensitive excerpts in the record.

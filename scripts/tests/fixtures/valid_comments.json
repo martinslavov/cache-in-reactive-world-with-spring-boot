@@ -1,0 +1,12 @@
+[
+  {
+    "id": 1,
+    "html_url": "https://github.com/martinslavov/rcas/issues/63#issuecomment-1",
+    "body": "<!-- agent-run: {\"v\":1,\"agent\":\"product-owner-agent\",\"issue\":63,\"pr\":64,\"sha\":\"abc123\",\"start\":\"2026-10-25T20:00:00Z\",\"end\":\"2026-10-25T20:01:30Z\",\"duration_s\":90,\"checks_failed\":[],\"retries\":0,\"status\":\"success\",\"failure_source\":null} -->"
+  },
+  {
+    "id": 2,
+    "html_url": "https://github.com/martinslavov/rcas/pull/64#issuecomment-2",
+    "body": "<!-- agent-run: {\"v\":1,\"agent\":\"senior-qa-engineer\",\"issue\":63,\"pr\":64,\"sha\":\"def456\",\"start\":\"2026-10-25T20:02:00Z\",\"end\":\"2026-10-25T20:07:30Z\",\"duration_s\":330,\"checks_failed\":[\"unit-tests\"],\"retries\":1,\"status\":\"failure\",\"failure_source\":\"tests\"} -->\n<!-- qa-round:1 -->\n<!-- ci-fix-attempt:1 -->"
+  }
+]

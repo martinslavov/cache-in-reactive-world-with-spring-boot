@@ -85,3 +85,15 @@ Evidence must verify the **behaviour**, not merely that code exists.
 `Definition of Done` becomes a required status check in the `Main protection` ruleset (ruleset 25822954) only after it has
 been reported once; from then on **no agent may merge unless every ruleset-required check and the agent statuses
 (`PR Review`, `QA Agent`, `Definition of Done`) are successful on the current head SHA**.
+
+
+## Agent run record (required)
+
+At the start of every run, record UTC start time and epoch seconds with `date -u +%Y-%m-%dT%H:%M:%SZ` and `date +%s`.
+Before ending, record both values again, calculate `duration_s` from the epoch values, and post exactly one hidden,
+single-line `<!-- agent-run: {...} -->` JSON record using the schema and constraints in `.github/copilot-instructions.md`.
+Use agent id `dod-validator-agent`, the task issue number, and the current PR number/head SHA (use `null` when there is no PR or SHA).
+This agent posts its record on the PR issue number with `gh issue comment <number> -R martinslavov/rcas --body '<marker>'`.
+Include only actual failed checks and retries performed during this run; set status to `success`, `failure`, `skipped`, or
+`escalated`. For `failure` or `escalated`, classify the primary cause as tests for missing evidence, implementation for behavior not meeting criteria, infrastructure for external outages, or po for unclear/changed criteria; use `failure_source: null` for
+`success` or `skipped`. Never put secrets, credentials, tokens, or sensitive excerpts in the record.
