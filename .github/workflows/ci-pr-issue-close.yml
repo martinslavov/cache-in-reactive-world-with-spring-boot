@@ -1,0 +1,67 @@
+name: PR Issue Close
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  close-issue:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Close tracking issue
+        id: close
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+            const marker = `<!-- pr-tracking:${owner}/${repo}#${pr.number} -->`;
+
+            const issues = await github.paginate(
+              github.rest.issues.listForRepo,
+              { owner, repo, state: 'all', per_page: 100 }
+            );
+
+            const issue = issues.find(item =>
+              !item.pull_request && item.body?.includes(marker)
+            );
+
+            if (!issue) {
+              core.info(`No tracking issue found for PR #${pr.number}`);
+              return;
+            }
+
+            if (issue.state === 'open') {
+              await github.rest.issues.update({
+                owner,
+                repo,
+                issue_number: issue.number,
+                state: 'closed',
+                state_reason: pr.merged ? 'completed' : 'not_planned'
+              });
+            }
+
+            core.setOutput('issue-node-id', issue.node_id);
+
+      - name: Move tracking issue to Done on the board
+        if: steps.close.outputs.issue-node-id != ''
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ISSUE_NODE_ID: ${{ steps.close.outputs.issue-node-id }}
+        run: |
+          project=$(gh api graphql -f query='query { user(login: "martinslavov") { projectV2(number: 1) { id field(name: "Status") { ... on ProjectV2SingleSelectField { id options { id name } } } } } }' --jq '.data.user.projectV2')
+          project_id=$(jq -r '.id' <<< "$project")
+          field_id=$(jq -r '.field.id' <<< "$project")
+          option_id=$(jq -r '.field.options[] | select(.name == "Done") | .id' <<< "$project")
+          # addProjectV2ItemById is idempotent and returns the existing item
+          item_id=$(gh api graphql \
+            -f query='mutation($project: ID!, $content: ID!) { addProjectV2ItemById(input: {projectId: $project, contentId: $content}) { item { id } } }' \
+            -f project="$project_id" -f content="$ISSUE_NODE_ID" --jq '.data.addProjectV2ItemById.item.id')
+          gh api graphql \
+            -f query='mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) { updateProjectV2ItemFieldValue(input: {projectId: $project, itemId: $item, fieldId: $field, value: {singleSelectOptionId: $option}}) { projectV2Item { id } } }' \
+            -f project="$project_id" -f item="$item_id" -f field="$field_id" -f option="$option_id"
