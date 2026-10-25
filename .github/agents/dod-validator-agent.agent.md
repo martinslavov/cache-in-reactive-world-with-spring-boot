@@ -35,9 +35,10 @@ Evidence must verify the **behaviour**, not merely that code exists.
 1. Start only after `QA Agent` is `success` on the current PR head SHA
    (`SHA=$(gh pr view <n> -R martinslavov/rcas --json headRefOid -q .headRefOid)`;
    `gh api repos/martinslavov/rcas/commits/$SHA/status -q '.statuses[] | select(.context=="QA Agent") | .state'`).
-   Otherwise do nothing and do not set `Definition of Done` to success; report the prerequisite. Stop if the label
-   `needs-human-review` is present on the PR
-   (`gh api repos/martinslavov/rcas/issues/<pr>/labels -q '.[].name | select(. == "needs-human-review")'`).
+   If it is not `success`, or if the label `needs-human-review` is present on the PR
+   (`gh api repos/martinslavov/rcas/issues/<pr>/labels -q '.[].name | select(. == "needs-human-review")'`), do not
+   validate; set `Definition of Done` to `failure` on the current head SHA with description
+   `Blocked: QA Agent not success` or `Blocked: needs-human-review`, and report the prerequisite.
 2. Find the linked issue from `Closes #N` in the PR description (`gh pr view <n> -R martinslavov/rcas --json body`) and read
    it with its comments (`gh api repos/martinslavov/rcas/issues/<N> -q .body`,
    `gh api repos/martinslavov/rcas/issues/<N>/comments`). Extract **every** acceptance criterion (checklist items under
@@ -62,7 +63,7 @@ Evidence must verify the **behaviour**, not merely that code exists.
 
    Every criterion gets a row; `weak` and `missing` rows state what evidence is needed.
 6. Set the final status on the **current** head SHA. You MUST always set a final status (`success` or `failure`); never leave
-   it `pending`, also when a command fails or you are blocked (use `failure` with the reason).
+   it `pending`, also when a command fails or you are blocked (use `failure` with the reason, as in step 1).
    - Every criterion `met`:
      `gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=success -f context="Definition of Done" -f description="All <n> acceptance criteria met"`
    - Otherwise (max 140 characters, list the unmet criteria numbers):

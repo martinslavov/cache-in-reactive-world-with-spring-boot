@@ -261,7 +261,7 @@ attempt. If attempt 3 still fails or the same signature appears twice consecutiv
 `needs-human-review` and mentions `@martinslavov` with the check, run URL, signature, count and log excerpt. No agent
 commits or merges while the label is present; only a human removes it to resume, retaining the separate CI, QA and PR
 Review markers. After resumption numeric limits are not reapplied, but a repeated CI signature still stops the loop.
-Auto-merge requires all existing ruleset checks plus `PR Review` and `QA Agent` success on the current head SHA, no
+Auto-merge requires all existing ruleset checks plus `PR Review`, `QA Agent` and `Definition of Done` success on the current head SHA (the latter is added to the ruleset after its first report), no
 `needs-human-review` label, and no human comments or unresolved blocker/major findings. `PR Review` is also a required check in the
 `Main protection` ruleset. Rules are in `.github/copilot-instructions.md`.
 
