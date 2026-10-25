@@ -37,15 +37,20 @@ at a time, with production-quality code and tests, and finish by opening a pull 
 8. Push and open a PR against `main` using `.github/pull_request_template.md`: fill every section, put `Closes #<issue>`
    under "Pull-request relations" (so the issue is closed and moved to Done on merge), and list the exact commands run with their result under "How has this been tested?".
    Then complete the PR (merging is the default):
-   - Wait for all checks: `gh pr checks <n> -R martinslavov/rcas --watch` (or poll it).
+   - Immediately after opening the PR set the QA gate to pending, and again after every new push (the head SHA changes):
+     `SHA=$(gh pr view <n> -R martinslavov/rcas --json headRefOid -q .headRefOid)` then
+     `gh api -X POST repos/martinslavov/rcas/statuses/$SHA -f state=pending -f context="QA Agent" -f description="Waiting for QA"`.
+   - Hand over to `senior-qa-engineer`, which reviews and tests the PR and sets `QA Agent` to `success` or `failure`.
+     On `failure`, read its PR comments, fix the bugs, push, set `QA Agent` to pending again and hand over to QA again.
+   - Wait for all checks, including `QA Agent`: `gh pr checks <n> -R martinslavov/rcas --watch` (or poll it).
    - Read the comments and reviews: `gh pr view <n> -R martinslavov/rcas --comments` and
      `gh api repos/martinslavov/rcas/pulls/<n>/reviews` (also `pulls/<n>/comments` for review comments).
      Ignore automation comments: the `<!-- pr-tracking-link -->` tracking issue comment and `github-actions` bot comments.
-   - If ALL checks pass and there are no other comments or review comments, merge:
+   - If ALL checks pass, including `QA Agent` = success, and there are no other comments or review comments, merge:
      `gh pr merge <n> -R martinslavov/rcas --merge --delete-branch`, and report the merge. Merging closes the task issue
      (`Closes #N`) and the tracking issue, and moves the board item to Done automatically.
-   - If a check fails, investigate, fix and push, then wait for the checks again. If checks are pending or their state
-     or the comments cannot be determined, do not merge and report it.
+   - If a check fails, investigate, fix and push, then set `QA Agent` to pending and wait for the checks again. If checks
+     (including `QA Agent`) are pending or their state or the comments cannot be determined, do not merge and report it.
    - If there are comments or reviews, do not merge; report them.
    - Override: if the user's task says to keep the PR open (e.g. "leave the PR open", "do not merge"), never merge.
    Report the PR URL, the check results and the merge status.
