@@ -1,12 +1,7 @@
----
-applyTo: "**"
-excludeAgent: "coding-agent"
----
-
 # Code review guidelines
 
-Used by the Copilot code review agent, which starts automatically when a pull request is created
-(ruleset `Main protection`, rule `copilot_code_review`).
+Used by the `CI Code Review Agent` workflow (`.github/workflows/ci-code-review-agent.yml`), which starts automatically
+when a pull request is opened or updated and posts a review comment.
 
 ## Project context
 
