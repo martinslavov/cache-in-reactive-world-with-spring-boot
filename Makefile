@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 HEALTH_TIMEOUT ?= 180
 
-.PHONY: build up down logs component-tests sanity-tests
+.PHONY: build up down logs component-tests sanity-tests monitoring-up monitoring-down
 
 ## Build the executable jar used by the Docker image
 build:
@@ -26,3 +26,11 @@ component-tests:
 ## Run only the fast sanity (smoke) tests against the running stack
 sanity-tests:
 	./gradlew :component-tests:sanityTest
+
+## Start the stack with the monitoring profile (OTel Collector, Prometheus, Loki, Grafana) and OTLP export enabled in RCAS
+monitoring-up:
+	$(COMPOSE) --env-file docker/monitoring/monitoring.env --profile app --profile monitoring up -d --build --wait --wait-timeout $(HEALTH_TIMEOUT)
+
+## Stop the stack including the monitoring services and remove containers, network and volumes
+monitoring-down:
+	$(COMPOSE) --env-file docker/monitoring/monitoring.env --profile app --profile monitoring down -v

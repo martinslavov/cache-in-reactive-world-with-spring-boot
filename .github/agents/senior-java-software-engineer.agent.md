@@ -49,3 +49,9 @@ at a time, with production-quality code and tests, and finish by opening a pull 
    - If there are comments or reviews, do not merge; report them.
    - Override: if the user's task says to keep the PR open (e.g. "leave the PR open", "do not merge"), never merge.
    Report the PR URL, the check results and the merge status.
+
+## Elapsed time
+
+The main (orchestrating) agent records the start time with `date +%s` when it receives the user's input and computes the total
+elapsed time at the end (from the user's input until everything is merged and all agents are done); the final report to the user
+must state it. When you are the last step, include in your report how long your own work took (`date +%s` at start and end) so the main agent can report the total.

@@ -88,6 +88,26 @@ All containers share the `rcas-docker-network` network. The Compose project name
 
 The database scripts run only when the Postgres container is created for the first time. After changing them, recreate the data with `docker compose --profile app down -v`.
 
+## Monitoring (profile `monitoring`)
+
+An optional monitoring stack is available in the `monitoring` Compose profile. It is not started by `docker compose up`, `make up` or CI.
+
+| Service | Image | Port | Notes |
+|---------|-------|------|-------|
+| `otel-collector` | `otel/opentelemetry-collector:0.116.1` | 4317 (gRPC), 4318 (HTTP) | receives OTLP; logs go to Loki, traces to the collector log (`debug` exporter) |
+| `prometheus` | `prom/prometheus:v3.0.1` | 9090 | scrapes `rcas:8080/app/actuator/prometheus` and the collector |
+| `loki` | `grafana/loki:3.3.2` | 3100 | log storage (OTLP ingestion on `/otlp`) |
+| `grafana` | `grafana/grafana:11.4.0` | 3000 | provisioned datasources Prometheus and Loki, anonymous admin access (local use only) |
+
+```bash
+make monitoring-up      # RCAS + dependencies + monitoring, OTLP export enabled in RCAS
+make monitoring-down    # stop everything and remove volumes
+```
+
+`make monitoring-up` passes `docker/monitoring/monitoring.env`, which switches RCAS to `log4j2-otel.yaml` (console plus the OpenTelemetry log appender) and enables OTLP trace and log export to the collector (traces are sampled at 100%). Without that file the OTLP export is off, so tests and the default stack need no collector. Configuration lives in `docker/monitoring/`.
+
+Open Grafana at <http://localhost:3000> (Explore, datasource `Loki`, query `{service_name="rcas"}`; or `Prometheus`), Prometheus targets at <http://localhost:9090/targets>.
+
 ## Configuring the JVM
 
 The image is based on a hardened Temurin image that has no shell, so JVM options are passed through the `JDK_JAVA_OPTIONS` environment variable, which the `java` launcher reads itself. Separate multiple options with spaces:
@@ -203,3 +223,9 @@ By default the engineer agent merges the PR itself (merge commit, branch deleted
 or reviews other than the automated tracking comment. Merging closes the task issue (`Closes #N`) and the tracking issue and moves
 the board item to Done. A failing, pending or unknown check, or any comment/review, blocks the merge and is reported instead.
 Add e.g. "leave the PR open" or "do not merge" to the task to keep the PR open.
+
+## Task reports: elapsed time
+
+At the end of every task the agent reports the total elapsed time from the user's input until everything is merged and all agents are done.
+The main (orchestrating) agent records the start with `date +%s` at the beginning of the task and computes the difference at the end
+(see `.github/copilot-instructions.md`).

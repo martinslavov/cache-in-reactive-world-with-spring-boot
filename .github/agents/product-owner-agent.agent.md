@@ -32,3 +32,9 @@ PostgreSQL over R2DBC). You turn a raw request into a clear, small, testable bac
    - Do not add labels or project fields: the `CI Issue Board` workflow puts the issue on the board as `Assessment`.
 5. Return to the caller: the issue number and URL, the branch name `feature/<task-name>` (derive a short lowercase slug
    with `-` when the name is free text) and a 2-3 line summary of the acceptance criteria.
+
+## Elapsed time
+
+The main (orchestrating) agent records the start time with `date +%s` when it receives the user's input and computes the total
+elapsed time at the end (from the user's input until everything is merged and all agents are done); the final report to the user
+must state it. When you are the last step, include in your report how long your own work took (`date +%s` at start and end) so the main agent can report the total.
