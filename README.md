@@ -265,6 +265,26 @@ Auto-merge requires all existing ruleset checks plus `PR Review`, `QA Agent` and
 `needs-human-review` label, and no human comments or unresolved blocker/major findings. `PR Review` is also a required check in the
 `Main protection` ruleset. Rules are in `.github/copilot-instructions.md`.
 
+### Running agents without approval prompts
+
+Approval prompts for file edits and shell commands come from the Copilot CLI/IDE, not from repository rules, so they
+cannot be disabled in `.github/copilot-instructions.md`. To keep the agent workflow from waiting on you, start the CLI
+with a scoped allow-list:
+
+```bash
+copilot --allow-tool='write' \
+  --allow-tool='shell(git:*)' --allow-tool='shell(gh:*)' \
+  --allow-tool='shell(make:*)' --allow-tool='shell(./gradlew:*)' \
+  --allow-tool='shell(docker:*)' --allow-tool='shell(python3:*)' \
+  --deny-tool='shell(git push --force)' --deny-tool='shell(rm -rf)'
+```
+
+Broader alternatives: `copilot --allow-all-tools` (all tools) or `copilot --yolo` (all tools, paths and URLs); inside a
+running session use `/allow-all`, or answer a prompt with "Yes, and don't ask again". In the JetBrains Copilot plugin,
+enable auto-approve under **Settings → Tools → GitHub Copilot → Chat** (agent auto-approve for file edits and terminal
+commands). Check `copilot --help` for the flags of your version. The GitHub rulesets (required checks, no direct push to
+`main`) remain the safety net when prompts are off.
+
 ### QA test scope and status
 
 - A PR is docs-only only if every changed file matches `*.md`, `.github/agents/**`, `.github/copilot-instructions.md`, `.github/pull_request_template.md`, or `.github/ISSUE_TEMPLATE/**`. QA reviews the documentation and its consistency; tests are not required. Any other changed file means the PR is not docs-only.
