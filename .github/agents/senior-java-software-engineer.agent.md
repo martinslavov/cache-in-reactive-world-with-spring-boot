@@ -69,10 +69,71 @@ at a time, with production-quality code and tests, and finish by opening a pull 
    - If ALL checks pass, both `PR Review` and `QA Agent` are `success` on the current head SHA, `needs-human-review` is absent, and there are no human
      comments or unresolved blocker/major findings, merge with `gh pr merge <n> -R martinslavov/rcas --merge --delete-branch` and report it.
      Merging closes the task issue (`Closes #N`) and the tracking issue, and moves the board item to Done automatically.
-   - If a check fails, investigate and fix only while the label is absent and the iteration limit has not stopped work; push, set
-     both agent statuses to pending, and repeat PR Review before QA and the remaining checks. If checks/status/comments/labels are pending or cannot be determined, do not merge
-     and report it. Honor an explicit request to keep the PR open.
+   - For failing non-agent CI checks, use the bounded CI fix loop below; PR Review and QA findings use their separate five-round
+     loops instead. Never commit or merge while `needs-human-review` is present. If checks/status/comments/labels are pending or
+     cannot be determined, do not merge and report it. Honor an explicit request to keep the PR open.
    Report the PR URL, head SHA, check results and merge status.
+
+## Bounded CI fix loop (non-agent required checks)
+
+Use this for failing CI jobs, including `unit-tests`, component/sanity tests, Checkstyle, `analyze`, `dependency-review`, and
+`secret-scan`. Keep CI attempts separate from `<!-- qa-round:N -->` failures and `<!-- pr-review-round:N -->` reviews: never
+count QA or PR Review statuses as CI attempts. Before each fix or re-run, check the PR's current head SHA and label; do not
+commit, rerun or merge when `needs-human-review` is present. Pending/skipped/unknown checks are not successful and do not
+justify a fix attempt without a diagnosed failure.
+
+1. Diagnose the **current head SHA** (replace `<pr>`, `<branch>`, `<id>` and `<Class>` with actual values):
+   `SHA=$(gh pr view <pr> -R martinslavov/rcas --json headRefOid -q .headRefOid)`;
+   `gh pr checks <pr> -R martinslavov/rcas --json name,state,link` (inspect `FAILURE` checks and their links);
+   `gh run list -R martinslavov/rcas --branch <branch> --json databaseId,name,conclusion,headSha,url` (use only a run with
+   `headSha` equal to `$SHA`; workflow names may differ from check/job names). For an Actions job link, the run ID is the
+   number after `/actions/runs/`; for a `/runs/<job-id>` link, look up the run via
+   `gh api repos/martinslavov/rcas/actions/jobs/<job-id> --jq .run_id`. Confirm the job belongs to the failed check with
+   `gh run view <id> -R martinslavov/rcas --json headSha,url,jobs` before diagnosing it. Read the actual failing steps with
+   `gh run view <id> -R martinslavov/rcas --log-failed`. For failed tests, download reports if the run uploaded them:
+   `gh run download <id> -R martinslavov/rcas -n test-reports` (use the actual artifact name shown by
+   `gh api repos/martinslavov/rcas/actions/runs/<id>/artifacts --jq '.artifacts[].name'` if it differs).
+   Identify the exact failing test class and method and its first actionable error. For a failing required status without an Actions run, inspect its check link/status details and report
+   that no Actions run/log is available; never substitute an unrelated run.
+   For a concrete historical failed run, `gh run view 40201155209 -R martinslavov/rcas --log-failed |
+   grep -m 1 -E 'FAILED|parse error:|##\[error\]|Exception' |
+   sed -E 's/^.*(jq: parse error:)/\1/; s/ at line [0-9]+, column [0-9]+//g'` yields
+   `jq: parse error: Invalid numeric literal` (the failed job is `review`). Adapt the grep to the actual log and inspect
+   the surrounding failure; a test report's class/method takes precedence over a generic `##[error]` line.
+2. Construct `<!-- ci-failure-signature:<sig> -->` with `<sig>` equal to `<check name>|<failing test class.method or first
+   normalized error line>`. Strip timestamps, run IDs, paths, line numbers and other volatile data from error text; use a
+   single line without `-->` and keep the check name verbatim. Prefix the signature with `infra:` for runner, network,
+   registry-pull or GitHub outage failures. Compare it to the signature in the **last** `<!-- ci-fix-attempt:N -->` comment
+   (read PR issue comments in chronological order); a matching signature means the previous fix/re-run did not change the
+   failure. Stop immediately, even if fewer than three attempts have been made. Do not create a new attempt marker on stop.
+3. Count attempts from PR issue comments, not agent memory (replace `<pr>` with the actual PR number):
+   `gh api repos/martinslavov/rcas/issues/<pr>/comments --paginate -q '[.[] | select(.body | contains("<!-- ci-fix-attempt:"))] | length'`.
+   This prints counts per page; for a single total when there are multiple pages use
+   `gh api repos/martinslavov/rcas/issues/<pr>/comments --paginate --slurp | jq '[.[][] | select(.body | contains("<!-- ci-fix-attempt:"))] | length'`.
+   Use exactly one marker of each kind in each attempt comment. If three attempts are already recorded and the current
+   failure remains, stop without a fourth; a third failed attempt is a hard stop. On a human-approved resumption (a human
+   removed `needs-human-review`), retain markers and continue numbering above three without re-applying the numeric limit,
+   but still stop on a repeated signature. Automated agents must never remove the label.
+4. Otherwise let N = total existing attempt comments + 1. Post a PR comment **before** changing anything with
+   `<!-- ci-fix-attempt:N -->` and `<!-- ci-failure-signature:<sig> -->`, check name, current SHA, run URL, relevant log excerpt,
+   reproduction command and proposed fix/re-run. This comment is the durable record even if the agent is restarted.
+   Reproduce application/test failures locally with the same CI command, narrowing to the actual test where possible
+   (`./gradlew test --tests '<Class>'`, or `make build && make up && make component-tests && make down`; use the corresponding
+   Gradle task/command for other failures). Fix only the diagnosed failure and rerun the relevant command locally before
+   committing and pushing. A push changes the head SHA: reset **both** agent statuses to pending and repeat PR Review before
+   QA on that SHA. Check the new head's CI results and repeat diagnosis and signature comparison when any check fails.
+5. Infrastructure failures may be retried **once** with `gh run rerun <id> -R martinslavov/rcas --failed` on the same
+   head SHA instead of a fix commit; the retry still requires the attempt comment and `infra:` signature and counts as one
+   attempt. Inspect the rerun's failing log and signature; if unchanged, stop immediately. Do not endlessly rerun an
+   outage, and never reset the agent statuses for a rerun without a head change.
+6. On any stop (third attempt still failing, three existing attempts with a failure, or repeated signature), create the
+   label if missing:
+   `gh label create needs-human-review -R martinslavov/rcas --color B60205 --description "Automated iteration limit reached; human review required" 2>/dev/null || true`;
+   apply it with `gh api -X POST repos/martinslavov/rcas/issues/<pr>/labels -f 'labels[]=needs-human-review'`.
+   Post a separate escalation comment mentioning `@martinslavov` with check name, run URL (or unavailable), signature,
+   attempt count and a short failing-log excerpt. Leave the PR open; make no further commits or merge. Only a human
+   removing the label explicitly resumes automated work; preserve every existing marker and still enforce repeated-signature
+   early stop after resumption. Do not claim success for a failing, missing or unknown check.
 
 ## Elapsed time
 
