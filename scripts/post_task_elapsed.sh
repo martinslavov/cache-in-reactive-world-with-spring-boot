@@ -15,8 +15,11 @@ end=${4:-$(date +%s)}
 repo=${RCAS_REPO:-martinslavov/rcas}
 marker='<!-- task-elapsed -->'
 
-for n in "$issue" "$pr" "$start" "$end"; do
-  [[ $n =~ ^[0-9]+$ ]] || { echo "Arguments must be positive integers" >&2; exit 2; }
+for n in "$issue" "$pr"; do
+  [[ $n =~ ^[1-9][0-9]*$ ]] || { echo "Issue and PR must be positive integers" >&2; exit 2; }
+done
+for n in "$start" "$end"; do
+  [[ $n =~ ^[0-9]+$ ]] || { echo "Epochs must be non-negative integers" >&2; exit 2; }
 done
 (( end >= start )) || { echo "end-epoch is before start-epoch" >&2; exit 2; }
 
@@ -30,9 +33,18 @@ body="${marker}
 |---|---|---|---|
 | $(utc "$start") | $(utc "$end") | #${issue} | #${pr} |"
 
+# Resolve both targets before writing so an invalid one leaves nothing half-updated.
+gh api "repos/${repo}/pulls/${pr}" --jq .number >/dev/null
+gh api "repos/${repo}/issues/${issue}" --jq .number >/dev/null
+ids=()
 for n in "$issue" "$pr"; do
-  id=$(gh api "repos/${repo}/issues/${n}/comments" --paginate \
-    --jq "[.[] | select(.body | startswith(\"${marker}\"))][0].id // empty" | head -n1)
+  ids+=("$(gh api "repos/${repo}/issues/${n}/comments" --paginate \
+    --jq "[.[] | select(.body | startswith(\"${marker}\"))][0].id // empty" | head -n1)")
+done
+
+for i in 0 1; do
+  n=$([[ $i == 0 ]] && echo "$issue" || echo "$pr")
+  id=${ids[$i]}
   if [[ -n $id ]]; then
     gh api -X PATCH "repos/${repo}/issues/comments/${id}" -f body="$body" --jq .html_url
   else
