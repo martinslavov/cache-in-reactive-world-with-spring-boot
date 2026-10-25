@@ -192,7 +192,7 @@ git push origin v1.0.0
 Recommended repository settings:
 
 - Settings → Actions → General → Workflow permissions: allow workflows to create issues and pull request comments (the PR Issue Tracking workflow also declares its permissions in the YAML).
-- Branch protection / rulesets for `main`: require `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review` and `secret-scan` before merging. **No agent may merge unless every required check is successful on the current head SHA** (pending, skipped, unknown or failed means do not merge).
+- Branch protection / rulesets for `main`: `Main protection` currently requires `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review` and `secret-scan`. `PR Review` is an additional workflow gate that must succeed on the current head SHA before QA or merge, but is intentionally not yet in the ruleset. **No agent may merge unless every ruleset-required check and both agent statuses (`PR Review`, `QA Agent`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge).
 - Security: secret scanning, push protection, Dependabot alerts and security updates enabled. The `Branch naming` ruleset excludes `dependabot/**` so Dependabot can create its branches.
 - Repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token): the Dockerfile uses Docker Hardened Images (`dhi.io`), which need a login to pull. Used by CI Component Tests.
 - Code scanning must be available for the repository to see the CodeQL results.
@@ -218,13 +218,23 @@ Custom agents live in `.github/agents/`:
 |-------|------|
 | `product-owner-agent` | Senior Product Owner: analyzes the input and creates a GitHub issue with acceptance criteria |
 | `senior-java-software-engineer` | Senior Java Software Engineer: implements the issue on a `feature/*` branch, tests it and opens a PR |
-| `senior-qa-engineer` | Senior QA Engineer: reviews and tests the PR, reports bugs and sets the `QA Agent` commit status |
+| `pr-review-agent` | Independent PR Reviewer: reads the issue and full diff, posts severity-ranked findings and sets `PR Review`; never changes code |
+| `senior-qa-engineer` | Senior QA Engineer: starts after current-head `PR Review` success, tests the PR, reports bugs and sets `QA Agent` |
 
-Give a task as `TASK-NAME:<name>` followed by the description. The product owner agent creates the issue, then the engineer
-agent implements it and opens the pull request, and the QA agent verifies it (Product Owner → Engineer → QA → merge). The rules are in `.github/copilot-instructions.md`.
-After five failed QA rounds, QA marks the PR `needs-human-review` and mentions `@martinslavov`; the engineer stops all fix commits and does not merge.
-Only a human removing that label resumes the loop, and QA round markers remain the per-PR source of truth. Auto-merge is blocked while the label is present.
-Resolved QA-finding comments do not block merging after QA succeeds on the current head SHA; comments from humans still block it.
+Give a task as `TASK-NAME:<name>` followed by the description. The workflow is Product Owner → Engineer → PR Review → QA → merge.
+The PR Review Agent independently reads the issue, the complete diff and surrounding code, then posts findings using severity
+`blocker`, `major`, `minor` or `nit`, including file and line where known. Blocker/major findings fail `PR Review` and return the
+PR to the engineer; minor/nit findings are reported but do not block QA. QA starts only after `PR Review` is `success` on the
+current head SHA. The engineer sets both `PR Review` and `QA Agent` to `pending` immediately after opening the PR and after every
+push. After each fix push, PR Review must succeed on the new head before QA resumes.
+
+Both review loops are bounded at five failure rounds. Each PR Review report includes `<!-- pr-review-round:N -->`; round numbers
+are derived from all such PR comment markers, not agent memory. On round-5 failure the agent applies `needs-human-review`,
+mentions `@martinslavov`, and stops. Only a human removing that label resumes automated work; markers remain the source of truth.
+No agent commits or merges while the label is present. QA uses its own `<!-- qa-round:N -->` markers and the same human-review
+stop. Auto-merge requires all existing ruleset checks plus `PR Review` and `QA Agent` success on the current head SHA, no
+`needs-human-review` label, and no human comments or unresolved findings. The `PR Review` status is an agent gate but is not yet
+included in the `Main protection` ruleset. Rules are in `.github/copilot-instructions.md`.
 
 ### QA test scope and status
 
@@ -234,13 +244,10 @@ Resolved QA-finding comments do not block merging after QA succeeds on the curre
 - When in doubt, QA runs the tests.
 - The `QA Agent` status description identifies the checks actually executed and their results, e.g. `docs-only review`, `build passed`, or `build+component+sanity passed`. It includes failures and never implies an unrun check passed.
 
-By default the engineer agent merges the PR itself (merge commit, branch deleted) once all checks, including `QA Agent`, pass and the PR has no comments
-or reviews other than the automated tracking comment. Merging closes the task issue (`Closes #N`) and the tracking issue and moves
-the board item to Done. A failing, pending or unknown check, or any comment/review, blocks the merge and is reported instead.
-The engineer sets the `QA Agent` commit status to `pending` right after opening the PR and after every push
-(`gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=pending -f context="QA Agent" -f description="Waiting for QA");`
-the QA agent sets it to `success` or `failure`. `QA Agent` is a required status check of the `Main protection` ruleset.
-Add e.g. "leave the PR open" or "do not merge" to the task to keep the PR open.
+By default the engineer merges with a merge commit and deletes the branch only after every ruleset-required check and both agent statuses
+are successful on the current head SHA, the label is absent, and no human comments or unresolved blocker/major findings remain. Merging closes the task
+issue (`Closes #N`) and the tracking issue and moves the board item to Done. A failing, pending or unknown check blocks the merge. Add
+"leave the PR open" or "do not merge" to the task to keep the PR open.
 
 ## Task reports: elapsed time
 
