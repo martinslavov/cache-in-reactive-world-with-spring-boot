@@ -26,18 +26,23 @@ You do not change production code; you may add or improve tests.
    `SHA=$(gh pr view <n> -R martinslavov/rcas --json headRefOid -q .headRefOid)`.
 2. Check the tests against every acceptance criterion and the edge cases above. Add missing tests (commit and push them
    to the PR branch; a push resets the status to `pending`, so re-read the head SHA afterwards).
-3. Run the relevant checks (JDK 25):
-   - `./gradlew build` and, if useful, `./gradlew jacocoTestReport`.
-   - When behavior visible over HTTP changed or for a full check:
-     `make build && make up && make component-tests && make sanity-tests && make down`.
-   - For documentation / workflow-only changes, review the diff for correctness and consistency and run the checks that apply.
+3. Apply the QA test-scope rules below to the changed paths, then run the required checks with JDK 25. Report only
+   checks actually executed and their results in the `QA Agent` status description.
 4. Report every bug as a PR comment (`gh pr comment <n> -R martinslavov/rcas --body ...`) addressed to the engineer
    with a reproducible description, and set the status to `failure`. The engineer fixes it, pushes (status becomes
    `pending` again) and QA repeats from step 1.
 5. Set the final status on the **current** head SHA. You MUST always set a final status (`success` or `failure`); never
    leave it `pending`, also not when a command fails or you are blocked (use `failure` with the reason).
    - QA passed and no findings remain unresolved:
-     `gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=success -f context="QA Agent" -f description="QA passed"`
+     `gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=success -f context="QA Agent" -f description="<checks executed and results>"`
    - Otherwise:
-     `gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=failure -f context="QA Agent" -f description="<short reason, max 140 chars>"`
+     `gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=failure -f context="QA Agent" -f description="<checks executed and results, plus short reason; max 140 chars>"`
 6. Report to the caller: status set, checks run with results, bugs found.
+
+## QA test scope and status
+
+- A PR is docs-only only if every changed file matches `*.md`, `.github/agents/**`, `.github/copilot-instructions.md`, `.github/pull_request_template.md`, or `.github/ISSUE_TEMPLATE/**`. QA reviews the documentation and its consistency; tests are not required. Any other changed file means the PR is not docs-only.
+- For any change under `src/**`, `component-tests/**`, or `config/**`, or to `build.gradle`, `settings.gradle`, `gradle/**`, `Dockerfile`, `docker-compose.yml`, `docker/**`, `Makefile`, `.github/workflows/**`, or `db.migration/**`, QA runs the relevant tests, at minimum `./gradlew build` with JDK 25.
+- For runtime-affecting changes (application source or configuration, runtime dependencies or packaging, database migrations, or Docker/Compose runtime setup; including changes in `src/**`, `config/**`, `db.migration/**`, `Dockerfile`, `docker-compose.yml`, and `docker/**`), QA additionally runs `make build && make up && make component-tests && make sanity-tests && make down`.
+- When in doubt, QA runs the tests.
+- The `QA Agent` status description identifies the checks actually executed and their results, e.g. `docs-only review`, `build passed`, or `build+component+sanity passed`. It includes failures and never implies an unrun check passed.

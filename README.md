@@ -220,11 +220,19 @@ Custom agents live in `.github/agents/`:
 Give a task as `TASK-NAME:<name>` followed by the description. The product owner agent creates the issue, then the engineer
 agent implements it and opens the pull request, and the QA agent verifies it (Product Owner → Engineer → QA → merge). The rules are in `.github/copilot-instructions.md`.
 
+### QA test scope and status
+
+- A PR is docs-only only if every changed file matches `*.md`, `.github/agents/**`, `.github/copilot-instructions.md`, `.github/pull_request_template.md`, or `.github/ISSUE_TEMPLATE/**`. QA reviews the documentation and its consistency; tests are not required. Any other changed file means the PR is not docs-only.
+- For any change under `src/**`, `component-tests/**`, or `config/**`, or to `build.gradle`, `settings.gradle`, `gradle/**`, `Dockerfile`, `docker-compose.yml`, `docker/**`, `Makefile`, `.github/workflows/**`, or `db.migration/**`, QA runs the relevant tests, at minimum `./gradlew build` with JDK 25.
+- For runtime-affecting changes (application source or configuration, runtime dependencies or packaging, database migrations, or Docker/Compose runtime setup; including changes in `src/**`, `config/**`, `db.migration/**`, `Dockerfile`, `docker-compose.yml`, and `docker/**`), QA additionally runs `make build && make up && make component-tests && make sanity-tests && make down`.
+- When in doubt, QA runs the tests.
+- The `QA Agent` status description identifies the checks actually executed and their results, e.g. `docs-only review`, `build passed`, or `build+component+sanity passed`. It includes failures and never implies an unrun check passed.
+
 By default the engineer agent merges the PR itself (merge commit, branch deleted) once all checks, including `QA Agent`, pass and the PR has no comments
 or reviews other than the automated tracking comment. Merging closes the task issue (`Closes #N`) and the tracking issue and moves
 the board item to Done. A failing, pending or unknown check, or any comment/review, blocks the merge and is reported instead.
 The engineer sets the `QA Agent` commit status to `pending` right after opening the PR and after every push
-(`gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=pending -f context="QA Agent" -f description="Waiting for QA"`);
+(`gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=pending -f context="QA Agent" -f description="Waiting for QA");
 the QA agent sets it to `success` or `failure`. `QA Agent` is a required status check of the `Main protection` ruleset.
 Add e.g. "leave the PR open" or "do not merge" to the task to keep the PR open.
 
