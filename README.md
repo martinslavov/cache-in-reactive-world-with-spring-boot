@@ -142,6 +142,10 @@ make down              # stop the stack and remove containers, network and volum
 
 Set `RCAS_BASE_URL` to test a service running somewhere else. `make logs` prints the container logs.
 
+### Logging
+
+RCAS logs only to the console (stdout), so the container runtime collects the logs; no log files are written. Use `make logs` or `docker compose --profile app logs rcas` to read them.
+
 ## CI/CD (GitHub Actions)
 
 Workflows live in `.github/workflows`:
