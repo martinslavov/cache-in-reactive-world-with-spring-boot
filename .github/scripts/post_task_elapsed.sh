@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Posts (or updates) the task elapsed-time comment on the task issue and the PR.
-# Usage: scripts/post_task_elapsed.sh <issue> <pr> <start-epoch> [end-epoch]
+# Usage: .github/scripts/post_task_elapsed.sh <issue> <pr> <start-epoch> [end-epoch]
 set -euo pipefail
 
 if [[ $# -lt 3 || $# -gt 4 ]]; then
