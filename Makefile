@@ -7,8 +7,8 @@ HEALTH_TIMEOUT ?= 180
 build:
 	./gradlew bootJar -x test
 
-## Build the image and start PostgreSQL, Redis and RCAS; waits until all containers are healthy
-up: build
+## Start (requires `make build` first): build the image and start PostgreSQL, Redis and RCAS; waits until all containers are healthy
+up:
 	$(COMPOSE) --profile app up -d --build --wait --wait-timeout $(HEALTH_TIMEOUT)
 
 ## Stop the stack and remove containers, network and volumes

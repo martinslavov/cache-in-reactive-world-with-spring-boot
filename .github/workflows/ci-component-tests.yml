@@ -49,6 +49,9 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Build application jar
+        run: make build
+
       - name: Execute infrastructure up command
         run: make up
 

@@ -131,7 +131,8 @@ Integration tests start PostgreSQL through Testcontainers, so they need a runnin
 Component tests (`src/componentTest`) call the running service over HTTP, so they exercise the whole stack: the RCAS image, PostgreSQL and Redis. They are not part of `./gradlew build`.
 
 ```bash
-make up                # build the jar and image, start the stack and wait until it is healthy
+make build             # build the jar used by the Docker image
+make up                # build the image, start the stack and wait until it is healthy
 make component-tests   # ./gradlew componentTest against http://localhost:8080/app
 make down              # stop the stack and remove containers, network and volumes
 ```
