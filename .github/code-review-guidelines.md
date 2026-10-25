@@ -1,7 +1,7 @@
 # Code review guidelines
 
-Used by the `CI Code Review Agent` workflow (`.github/workflows/ci-code-review-agent.yml`), which starts automatically
-when a pull request is opened or updated and posts a review comment.
+Source of the static review rules: `config/checkstyle/checkstyle.xml` implements the automatable parts and is run by the
+`CI Static Review` workflow (`./gradlew checkstyleMain checkstyleTest`) on every pull request. The rest is for human reviewers.
 
 ## Project context
 

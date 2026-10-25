@@ -175,7 +175,7 @@ public class UserRepositoryTest {
     @Order(8)
     public void testInsertAndQuery() {
 
-        Long userId = Long.valueOf(4l);
+        Long userId = Long.valueOf(4L);
         var user = new User.UserBuilder()
                 .setId(userId)
                         .setUsername("martinslavov")

@@ -7,15 +7,15 @@ import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Info;
 
 @OpenAPIDefinition(
-		info = @Info(
-				title = "Reactive REST API",
-				description = "Reactive REST API")
+        info = @Info(
+                title = "Reactive REST API",
+                description = "Reactive REST API")
 )
 @SpringBootApplication
 public class RcasApplication {
 
-	public static void main(String[] args) {
-		SpringApplication.run(RcasApplication.class, args);
-	}
+    public static void main(String[] args) {
+        SpringApplication.run(RcasApplication.class, args);
+    }
 
 }
