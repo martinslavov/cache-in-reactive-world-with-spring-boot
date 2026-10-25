@@ -103,6 +103,29 @@ jobs:
               });
             }
 
+            // Put the tracking issue link at the top of the PR description.
+            const bodyMarker =
+              `<!-- pr-tracking-issue:${owner}/${repo}#${pr.number} -->`;
+            const current = (await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: pr.number
+            })).data.body || '';
+
+            if (!current.includes(bodyMarker)) {
+              await github.rest.pulls.update({
+                owner,
+                repo,
+                pull_number: pr.number,
+                body: [
+                  bodyMarker,
+                  `**Tracking issue:** #${issue.number} (${issue.html_url})`,
+                  '',
+                  current
+                ].join('\n')
+              });
+            }
+
             core.setOutput('issue-url', issue.html_url);
             core.info(`Tracking issue: #${issue.number}`);
 
