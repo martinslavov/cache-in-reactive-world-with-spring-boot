@@ -1,5 +1,7 @@
 # RCAS – Reactive Cache Service
 
+> Reactive cache service with Caffeine (L1), Redis (L2) and PostgreSQL over R2DBC, built on Spring Boot WebFlux
+
 **RCAS** (Reactive Cache Service) is a reactive caching service built with Spring Boot WebFlux. It serves user and subscription data without blocking threads and puts a two-level cache in front of the database:
 
 1. **Caffeine**: a fast in-memory (L1) cache inside the application.
