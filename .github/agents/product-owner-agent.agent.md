@@ -30,7 +30,9 @@ PostgreSQL over R2DBC). You turn a raw request into a clear, small, testable bac
      `### Current behavior / steps to reproduce` (`NA` if not applicable), `### Acceptance criteria` (checklist),
      `### Out of scope`, `### Notes` (risks, dependencies, hints for the implementer).
    - Do not add labels or project fields: the `CI Issue Board` workflow puts the issue on the board as `Assessment`.
-5. Return to the caller: the issue number and URL, the branch name `feature/<task-name>` (derive a short lowercase slug
+5. Note whether the issue may affect architecture, database schema/migrations, messaging, public HTTP APIs or security so
+   the Architect can evaluate the approval triggers. Do not treat this assessment as design approval or skip the Architect.
+6. Return to the caller: the issue number and URL, the branch name `feature/<task-name>` (derive a short lowercase slug
    with `-` when the name is free text) and a 2-3 line summary of the acceptance criteria.
 
 ## Elapsed time

@@ -217,11 +217,20 @@ Custom agents live in `.github/agents/`:
 | Agent | Role |
 |-------|------|
 | `product-owner-agent` | Senior Product Owner: analyzes the input and creates a GitHub issue with acceptance criteria |
+| `architect-agent` | Senior Software Architect: posts a design note or an auditable skip, and gates high-risk changes on explicit user approval |
 | `senior-java-software-engineer` | Senior Java Software Engineer: implements the issue on a `feature/*` branch, tests it and opens a PR |
 | `pr-review-agent` | Independent PR Reviewer: reads the issue and full diff, posts severity-ranked findings and sets `PR Review`; never changes code |
 | `senior-qa-engineer` | Senior QA Engineer: starts after current-head `PR Review` success, tests the PR, reports bugs and sets `QA Agent` |
 
-Give a task as `TASK-NAME:<name>` followed by the description. The workflow is Product Owner → Engineer → PR Review → QA → merge.
+Give a task as `TASK-NAME:<name>` followed by the description. The workflow is Product Owner → Architect (design note or auditable skip) →
+explicit user approval when required → Engineer → PR Review → QA → merge. For architecture changes (new module/layer/component or cache
+topology), database schema/migrations, messaging/Kafka, public HTTP API or security changes, the Architect applies
+`architecture-approval-required`; the orchestrator must wait for the user's explicit approval recorded on the issue as
+`<!-- architecture-approved -->` before the Engineer creates a branch or starts implementation. The Engineer reads the design note
+before implementation. Architect skips only docs-only changes (per the QA definition below) or small changes that touch none of the
+listed risk areas, configuration, dependencies, architecture or cache topology; every skip has an issue comment with
+`<!-- architect-skipped -->` and `skipped: <reason>`.
+
 The PR Review Agent independently reads the issue, the complete diff and surrounding code, then posts findings using severity
 `blocker`, `major`, `minor` or `nit`, including file and line where known. Blocker/major findings fail `PR Review` and return the
 PR to the engineer; minor/nit findings are reported but do not block QA. QA starts only after `PR Review` is `success` on the
@@ -232,7 +241,12 @@ Both review loops are bounded at five failure rounds. Each PR Review report incl
 are derived from all such PR comment markers, not agent memory. On round-5 failure the agent applies `needs-human-review`,
 mentions `@martinslavov`, and stops. Only a human removing that label resumes automated work; markers remain the source of truth.
 No agent commits or merges while the label is present. QA uses its own `<!-- qa-round:N -->` markers and the same human-review
-stop. CI fix attempts are a separate three-attempt loop tracked by `<!-- ci-fix-attempt:N -->` and
+stop. For issues labelled `architecture-approval-required`, PR Review also checks conformance to the approved design note (material
+deviations are at least major), backward compatibility and, for schema changes, migration and rollback evidence. PR descriptions
+must not claim review, QA or CI/check statuses (for example, "no review performed" or "QA pending"); commit statuses and check
+runs are the source of truth. The test section may list only local commands actually run and their results.
+
+CI fix attempts are a separate three-attempt loop tracked by `<!-- ci-fix-attempt:N -->` and
 `<!-- ci-failure-signature:<check name>|<test id or normalized error> -->` in PR comments. The engineer reads the failed
 check and its Actions log/test report, reproduces and re-runs locally before pushing; one `infra:` retry counts as an
 attempt. If attempt 3 still fails or the same signature appears twice consecutively, the engineer applies
