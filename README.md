@@ -121,7 +121,15 @@ Setting the variable replaces the default from the Dockerfile (`-XX:MaxRAMPercen
 
 ## Health check
 
-Because the hardened image has no shell or `curl`, the container health check runs a tiny precompiled Java class (`docker/HealthCheck.java`) against the actuator endpoint. `docker compose ps` shows `rcas` as `healthy` when it succeeds.
+The image is single-stage on the hardened runtime (`dhi.io/eclipse-temurin:25`): no `RUN`, compiler, shell or `curl`, and it runs as `nonroot`.
+The health check is a tiny Java class (`src/healthcheck/java/HealthCheck.java`, Gradle source set `healthcheck`) that `make build`
+(`./gradlew bootJar healthCheckClass`, also part of `./gradlew build`) compiles to `build/healthcheck/HealthCheck.class`; the Dockerfile copies it next to the jar.
+
+The Dockerfile defines `HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 CMD ["java", "-cp", "/app", "HealthCheck"]`.
+The class calls `http://127.0.0.1:8080/app/actuator/health` inside the container (an optional URL argument overrides it) and exits `0` only on HTTP 200,
+with 2 s connect/read timeouts. The container becomes `unhealthy` after 3 consecutive failures once the 40 s start period is over.
+`docker-compose.yml` reuses the image health check and only adds `start_interval: 2s` (with the same `start_period: 40s`, which Compose requires) so that `make up` turns `healthy` quickly.
+`docker compose ps` shows `rcas` as `healthy` when it succeeds.
 
 ## Endpoints
 

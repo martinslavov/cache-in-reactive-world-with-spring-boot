@@ -21,6 +21,22 @@ ext {
 	otelLog4jAppenderVersion = '2.28.0-alpha'
 }
 
+// Container health check helper (default package, no dependencies); copied into the image as a plain class file
+sourceSets {
+	healthcheck
+}
+
+def healthCheckClass = tasks.register('healthCheckClass', Sync) {
+	description = 'Copies the compiled container health check class to build/healthcheck for the Dockerfile.'
+	group = 'build'
+	from sourceSets.healthcheck.output.classesDirs
+	into layout.buildDirectory.dir('healthcheck')
+}
+
+tasks.named('assemble') {
+	dependsOn healthCheckClass
+}
+
 configurations {
 	all {
 		exclude group: 'org.springframework.boot', module: 'spring-boot-starter-logging'
