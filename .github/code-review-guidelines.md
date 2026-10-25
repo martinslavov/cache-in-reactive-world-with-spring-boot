@@ -42,6 +42,7 @@ Gradle project that runs HTTP tests against the docker compose stack. All layers
 - Identify **violations of SOLID or DRY**.
 - Look for **code smells** such as long methods, large classes and hidden dependencies.
 - Confirm **testability**: code should be easy to mock and unit test, and new behavior should come with tests.
+- Check that coverage does not drop below the JaCoCo minimums in `build.gradle` (LINE 45 %, BRANCH 15 %; enforced by `./gradlew build`, report with `./gradlew jacocoTestReport`).
 - Check that secrets and credentials are not committed and that workflow changes keep least-privilege `permissions`.
 
 ## Review communication
