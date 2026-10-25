@@ -1,0 +1,124 @@
+name: PR Issue Tracking
+
+on:
+  pull_request:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+# Serialize runs for the same PR to avoid creating duplicate tracking issues
+concurrency:
+  group: pr-issue-tracking-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  create-issue:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create or find linked issue
+        id: tracking
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+
+            const marker =
+              `<!-- pr-tracking:${owner}/${repo}#${pr.number} -->`;
+
+            // Search all repository issues, including closed issues.
+            const issues = await github.paginate(
+              github.rest.issues.listForRepo,
+              {
+                owner,
+                repo,
+                state: 'all',
+                per_page: 100
+              }
+            );
+
+            let issue = issues.find(item =>
+              !item.pull_request &&
+              item.body?.includes(marker)
+            );
+
+            if (!issue) {
+              const result = await github.rest.issues.create({
+                owner,
+                repo,
+                title: `Track PR #${pr.number}: ${pr.title}`,
+                body: [
+                  marker,
+                  '## Pull Request tracking',
+                  '',
+                  `**Pull Request:** [#${pr.number}](${pr.html_url})`,
+                  `**Author:** @${pr.user.login}`,
+                  '',
+                  '### Description',
+                  pr.body || 'No description provided.',
+                  '',
+                  '### Checklist',
+                  '- [ ] Build passed',
+                  '- [ ] Tests passed',
+                  '- [ ] Security checks passed',
+                  '- [ ] Code review completed',
+                  '- [ ] Pull Request merged'
+                ].join('\n')
+              });
+
+              issue = result.data;
+            }
+
+            // Link the issue back to the PR.
+            const commentMarker =
+              `<!-- pr-tracking-link:${owner}/${repo}#${pr.number} -->`;
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner,
+                repo,
+                issue_number: pr.number,
+                per_page: 100
+              }
+            );
+
+            const linked = comments.some(comment =>
+              comment.body?.includes(commentMarker)
+            );
+
+            if (!linked) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: pr.number,
+                body: [
+                  commentMarker,
+                  `Tracking issue: [#${issue.number}](${issue.html_url})`
+                ].join('\n')
+              });
+            }
+
+            core.setOutput('issue-url', issue.html_url);
+            core.info(`Tracking issue: #${issue.number}`);
+
+      - name: Add tracking issue to RCAS Tracking board
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ISSUE_URL: ${{ steps.tracking.outputs.issue-url }}
+        run: |
+          project=$(gh api graphql -f query='query { user(login: "martinslavov") { projectV2(number: 1) { id field(name: "Status") { ... on ProjectV2SingleSelectField { id options { id name } } } } } }' --jq '.data.user.projectV2')
+          project_id=$(jq -r '.id' <<< "$project")
+          field_id=$(jq -r '.field.id' <<< "$project")
+          option_id=$(jq -r '.field.options[] | select(.name == "Assessment") | .id' <<< "$project")
+          issue_id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_URL##*/}" --jq '.node_id')
+          item_id=$(gh api graphql \
+            -f query='mutation($project: ID!, $content: ID!) { addProjectV2ItemById(input: {projectId: $project, contentId: $content}) { item { id } } }' \
+            -f project="$project_id" -f content="$issue_id" --jq '.data.addProjectV2ItemById.item.id')
+          gh api graphql \
+            -f query='mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) { updateProjectV2ItemFieldValue(input: {projectId: $project, itemId: $item, fieldId: $field, value: {singleSelectOptionId: $option}}) { projectV2Item { id } } }' \
+            -f project="$project_id" -f item="$item_id" -f field="$field_id" -f option="$option_id"

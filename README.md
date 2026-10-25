@@ -1,6 +1,12 @@
-# cache-in-reactive-world-with-spring-boot
+# RCAS – Reactive Cache Service
 
-Reactive Spring Boot (WebFlux) service that demonstrates two cache layers: an in-memory Caffeine cache and a Redis cache, on top of a PostgreSQL database accessed through R2DBC.
+**RCAS** (Reactive Cache Service) is a reactive caching service built with Spring Boot WebFlux. It serves user and subscription data without blocking threads and puts a two-level cache in front of the database:
+
+1. **Caffeine**: a fast in-memory (L1) cache inside the application.
+2. **Redis**: a shared (L2) reactive cache, accessed through reactive Redis operations.
+3. **PostgreSQL**: the source of truth, accessed through non-blocking R2DBC.
+
+A read goes through the caches first and only falls back to the database on a miss, so repeated requests are served without hitting PostgreSQL. All layers are non-blocking, which keeps the service responsive under load with a small number of threads.
 
 ## Tech stack
 
@@ -20,7 +26,7 @@ Reactive Spring Boot (WebFlux) service that demonstrates two cache layers: an in
 
 ```bash
 ./gradlew clean build        # compile + run all tests
-./gradlew bootJar            # only build the executable jar (build/libs/cache-0.0.1-SNAPSHOT.jar)
+./gradlew bootJar            # only build the executable jar (build/libs/rcas-0.0.1-SNAPSHOT.jar)
 ```
 
 The tests use Testcontainers, so Docker must be running.
@@ -34,9 +40,9 @@ The tests use Testcontainers, so Docker must be running.
 | Command | What starts |
 |---------|-------------|
 | `docker compose up -d` | Only the infrastructure: PostgreSQL and Redis |
-| `docker compose --profile app up -d` | Infrastructure and the `cache-service` application |
+| `docker compose --profile app up -d` | Infrastructure and the `rcas` application |
 
-`cache-service` belongs to the `app` profile, so it is **not** started by default. This lets you run the dependencies in Docker and start the service yourself from the IDE.
+`rcas` belongs to the `app` profile, so it is **not** started by default. This lets you run the dependencies in Docker and start the service yourself from the IDE.
 
 Stop everything (the `--profile app` flag is needed to also stop the service):
 
@@ -60,7 +66,7 @@ docker compose --profile app up -d --build
 docker compose up -d
 ```
 
-Then run `com.reactive.cache.CacheApplication` from the IDE (or `./gradlew bootRun`) with the Spring profile `dev`:
+Then run `com.gbp.rcas.RcasApplication` from the IDE (or `./gradlew bootRun`) with the Spring profile `dev`:
 
 ```bash
 SPRING_PROFILES_ACTIVE=dev ./gradlew bootRun
@@ -74,9 +80,9 @@ The `dev` profile connects to PostgreSQL on `127.0.0.1:5432` (`testdb`, user and
 |---------|-------|------|-------|
 | `postgres` | `postgres:15.2` | 5432 | `db.migration/init.sql`, `V2__InsertUser.sql` and `V3__InsertSubscription.sql` run on first start |
 | `redis` | `redis:7` | 6379 | |
-| `cache-service` | built from `Dockerfile` | 8080 | profile `app` |
+| `rcas` | built from `Dockerfile` | 8080 | profile `app` |
 
-All containers share the `cache-docker-network` network. The Compose project name is `cache-docker`.
+All containers share the `rcas-docker-network` network. The Compose project name is `rcas`.
 
 The database scripts run only when the Postgres container is created for the first time. After changing them, recreate the data with `docker compose --profile app down -v`.
 
@@ -93,7 +99,7 @@ Setting the variable replaces the default from the Dockerfile (`-XX:MaxRAMPercen
 
 ## Health check
 
-Because the hardened image has no shell or `curl`, the container health check runs a tiny precompiled Java class (`docker/HealthCheck.java`) against the actuator endpoint. `docker compose ps` shows `cache-service` as `healthy` when it succeeds.
+Because the hardened image has no shell or `curl`, the container health check runs a tiny precompiled Java class (`docker/HealthCheck.java`) against the actuator endpoint. `docker compose ps` shows `rcas` as `healthy` when it succeeds.
 
 ## Endpoints
 
@@ -128,8 +134,8 @@ Workflows live in `.github/workflows`:
 |----------|---------|--------------|
 | `ci-unit-tests.yml` (CI Unit Tests) | pull request, push to `main`, manual | `./gradlew build` on JDK 25: compiles, runs unit and integration tests, uploads the test report |
 | `ci-release.yml` (CI Release) | push of a tag `v*` | Builds, runs the tests and creates a GitHub release with the executable jar and generated release notes |
-| `codeql.yml` (CodeQL) | pull request and push to `main`, weekly | Static security analysis, results appear in the Security tab |
-| `pr-issue-tracking.yml` (PR Issue Tracking) | pull request opened | Creates one tracking issue per PR (found again by a hidden marker, so it is never duplicated) and links it in a PR comment |
+| `ci-code-review.yml` (CodeQL) | pull request and push to `main`, weekly | Static security analysis, results appear in the Security tab |
+| `ci-pr-issue-tracking.yml` (PR Issue Tracking) | pull request opened | Creates one tracking issue per PR (found again by a hidden marker, so it is never duplicated) and links it in a PR comment |
 
 Create a release:
 
@@ -145,3 +151,14 @@ Recommended repository settings:
 - Code scanning must be available for the repository to see the CodeQL results.
 
 PRs from forks get a read-only token, so PR Issue Tracking cannot create issues for them.
+
+## Branch workflow
+
+Commits (and pushes) from `main`/`master` are blocked by the versioned hooks in `.githooks`. Enable them once per clone and work in a branch:
+
+```bash
+git config core.hooksPath .githooks
+git checkout -b feature/my-change
+```
+
+For real enforcement on GitHub also enable branch protection for `main` (see Settings → Rules).

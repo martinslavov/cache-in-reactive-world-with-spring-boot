@@ -1,0 +1,22 @@
+package com.gbp.rcas.model;
+
+import org.springframework.data.annotation.Id;
+
+public class Base {
+
+    @Id
+    protected Long id;
+
+    public Base(Long id) {
+        this.id = id;
+    }
+
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+
+}
