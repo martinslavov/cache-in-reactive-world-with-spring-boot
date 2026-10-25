@@ -1,6 +1,12 @@
 # RCAS – Reactive CAche Service
 
-Reactive Spring Boot (WebFlux) service that demonstrates two cache layers: an in-memory Caffeine cache and a Redis cache, on top of a PostgreSQL database accessed through R2DBC.
+**RCAS** (Reactive CAche Service) is a reactive caching service built with Spring Boot WebFlux. It serves user and subscription data without blocking threads and puts a two-level cache in front of the database:
+
+1. **Caffeine**: a fast in-memory (L1) cache inside the application.
+2. **Redis**: a shared (L2) reactive cache, accessed through reactive Redis operations.
+3. **PostgreSQL**: the source of truth, accessed through non-blocking R2DBC.
+
+A read goes through the caches first and only falls back to the database on a miss, so repeated requests are served without hitting PostgreSQL. All layers are non-blocking, which keeps the service responsive under load with a small number of threads.
 
 ## Tech stack
 
@@ -60,7 +66,7 @@ docker compose --profile app up -d --build
 docker compose up -d
 ```
 
-Then run `com.reactive.cache.CacheApplication` from the IDE (or `./gradlew bootRun`) with the Spring profile `dev`:
+Then run `com.reactive.rcas.RcasApplication` from the IDE (or `./gradlew bootRun`) with the Spring profile `dev`:
 
 ```bash
 SPRING_PROFILES_ACTIVE=dev ./gradlew bootRun
