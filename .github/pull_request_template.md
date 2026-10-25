@@ -17,8 +17,7 @@ _List the links to issues, pull requests or dependencies related to or required 
 
 _Describe the tests you ran to verify the change and how to reproduce them._
 
-- Commands you ran and their result, e.g. `./gradlew build` (passed), `make up && make component-tests && make down` (passed)
-- Test A
+- List only local commands actually run and their results, e.g. `./gradlew build` (passed). If no local commands were run, leave this section without test-result entries; do not add prose about unrun tests.
 
 # Checklist
 
@@ -28,7 +27,7 @@ _Place `NA` between brackets when an activity is not applicable._
 - [ ] I have performed a self-review of my own code.
 - [ ] I have added tests that prove my fix is effective or that my feature works.
 - [ ] New and existing tests pass locally (`./gradlew build`; component tests: `make build && make up && make component-tests && make down`).
-- [ ] All ruleset-required checks pass on the current head SHA (`unit-tests` incl. coverage gate, component tests, sanity tests, static review, `QA Agent`, `analyze`, `dependency-review`, `secret-scan`, `PR Review`) and both agent gates (`PR Review`, `QA Agent`) are successful; no merge otherwise.
+- [ ] Before merging, check GitHub checks and commit statuses on the current head SHA; do not report their status in this PR description.
 - [ ] Documentation is updated accordingly (_e.g._, README, API, configuration).
 - [ ] Pull request is categorized with labels:
   - **type**: `bug`, `documentation` or `enhancement`.

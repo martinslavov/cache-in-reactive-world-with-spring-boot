@@ -5,9 +5,10 @@ Tasks without that line are handled normally, without creating an issue, branch 
 
 ## Agents
 
-Four custom agents (in `.github/agents/`) do the work:
+Five custom agents (in `.github/agents/`) do the work:
 
 - `product-owner-agent`: Senior Product Owner, analyzes the task and creates the issue.
+- `architect-agent`: Senior Software Architect, posts a design note or an auditable skip and identifies changes requiring user approval; never changes code.
 - `senior-java-software-engineer`: Senior Java Software Engineer, implements the issue and opens the PR.
 - `pr-review-agent`: independent PR Reviewer, reviews the complete diff, posts severity-ranked findings and sets `PR Review`.
 - `senior-qa-engineer`: Senior QA Engineer, reviews and tests the PR and sets the `QA Agent` commit status.
@@ -15,17 +16,30 @@ Four custom agents (in `.github/agents/`) do the work:
 When a task has the `TASK-NAME:` line, run them one after the other (the main agent only coordinates):
 
 1. Delegate the whole input to `product-owner-agent`. It returns the issue number, URL and the branch name.
-2. Delegate the issue (number, branch name and the original input) to `senior-java-software-engineer`. It implements the
-   task, opens the PR, and immediately sets both `PR Review` and `QA Agent` to `pending` on the PR head SHA.
-3. Delegate the PR number to `pr-review-agent`. It independently reads the issue and full diff, posts its findings, and always
-   sets a final `PR Review` status on the current head SHA. On blocker/major findings, the engineer fixes them, pushes, resets both
+2. Delegate the issue to `architect-agent`. It posts exactly one design note comment containing
+   `<!-- architect-design-note -->` with affected components, interfaces/contracts, data/migrations, risks/mitigations,
+   test plan and `Approval required: yes/no`, or an auditable skip comment containing `<!-- architect-skipped -->` and
+   `skipped: <reason>`.
+3. If the issue has `architecture-approval-required`, show the design note to the user and stop before the Engineer starts.
+   Do not proceed on silence or inferred consent. Continue only after the user explicitly approves and the issue has an
+   `<!-- architecture-approved -->` comment that records who approved and when. Approval is required for architecture
+   changes (new module/layer/component or cache topology), database schema/migrations, messaging/Kafka, public HTTP API
+   (endpoints, payloads or status codes), or security (authentication, authorization, secrets, cryptography or
+   security-relevant dependencies).
+4. Delegate the issue (number, branch name, Architect comment and original input) to `senior-java-software-engineer` only
+   after the approval gate is satisfied or Architect has documented a skip. It implements the task, opens the PR, and
+   immediately sets both `PR Review` and `QA Agent` to `pending` on the PR head SHA.
+5. Delegate the PR number to `pr-review-agent`. It independently reads the issue and full diff, posts its findings, and always
+   sets a final `PR Review` status on the current head SHA. For `architecture-approval-required` issues, it also verifies
+   the implementation against the approved design note; a material deviation is at least `major`, and it requires backward
+   compatibility evidence plus migration and rollback considerations for schema changes. On blocker/major findings, the engineer fixes them, pushes, resets both
    `PR Review` and `QA Agent` to `pending`, and hands the updated PR back to PR Review. The loop is bounded at five rounds; on a
    round-5 failure, the agent applies `needs-human-review` and escalates to the user. Only a human removing the label resumes it.
-4. Only after `PR Review` is `success` on the current head SHA, delegate the PR number to `senior-qa-engineer`. QA reviews the
+6. Only after `PR Review` is `success` on the current head SHA, delegate the PR number to `senior-qa-engineer`. QA reviews the
    change, runs the relevant checks and sets `QA Agent` on the head SHA to `success` or `failure` (it must always set a final
    status). On QA failures before round 5, the engineer fixes and pushes, resets both statuses to `pending`, and hands over to PR
    Review first, then QA after PR Review succeeds. QA round-5 failure has the same human-review stop and resumption semantics.
-5. Report the issue and PR links, merge status and total elapsed time (see "Elapsed time" below). The engineer merges by default
+7. Report the issue and PR links, merge status and total elapsed time (see "Elapsed time" below). The engineer merges by default
    only when all required checks pass, both `PR Review` and `QA Agent` are `success` on the current head SHA, `needs-human-review`
    is absent, and no human comments or unresolved blocker/major findings remain. Resolved findings do not block after the relevant current-head
    status succeeds. Do not merge if the user asks to keep the PR open.
@@ -38,10 +52,12 @@ The steps below are what the agents follow:
    If the value after `TASK-NAME:` is already a slug (lowercase, words separated by `-`), use it as is. Otherwise (free text such as `Code review agent`),
    derive a short, meaningful slug yourself: lowercase, ASCII letters, digits and `-` only, fixing obvious typos, e.g. `feature/code-review-agent`.
    Only `feature/*` and `hotfix/*` branches can be created.
-3. **Work.** Do the task. Commit the changes with clear messages. Never push to `main` directly.
+3. **Work.** Before creating a branch or implementing, the engineer reads the Architect design note or confirms the skip comment. If `architecture-approval-required` is present, the engineer must find the explicit `<!-- architecture-approved -->` user comment first; otherwise stop without creating a branch or changing files. Commit the changes with clear messages. Never push to `main` directly.
 4. **Pull request.** When done, push the branch and open a PR against `main` using `.github/pull_request_template.md`.
    Reference the issue from step 1 under "Pull-request relations" as `Closes #N`: GitHub closes it on merge and `PR Issue Close` moves it to Done.
-   The `PR Issue Tracking` workflow adds the tracking issue link to the description. Required checks (unit, component and sanity tests and
+   The `PR Issue Tracking` workflow adds the tracking issue link to the description. Do not put review, QA or CI/check-status
+   claims in the PR description (including "no review performed" or "QA pending"); commit statuses and check runs are the
+   source of truth. The testing section may list only local commands actually run and their results; if none were run, leave it without test-result entries rather than adding prose about unrun tests. Required checks (unit, component and sanity tests and
    both agent statuses) must pass before merging. Right after opening the PR, and after every new push, the engineer sets both agent
    gates to pending:
    `gh api -X POST repos/martinslavov/rcas/statuses/<head-sha> -f state=pending -f context="PR Review" -f description="Waiting for PR review"`
@@ -104,6 +120,7 @@ they need the normal agent flow or a human.
 ### QA test scope and status
 
 - A PR is docs-only only if every changed file matches `*.md`, `.github/agents/**`, `.github/copilot-instructions.md`, `.github/pull_request_template.md`, or `.github/ISSUE_TEMPLATE/**`. QA reviews the documentation and its consistency; tests are not required. Any other changed file means the PR is not docs-only.
+- Architect may skip a design note for docs-only changes under that exact definition, or for a small, narrowly scoped change touching no public API, database schema/migrations, messaging, security, configuration, dependencies, architecture or cache topology. Every skip is auditable: post an issue comment with `<!-- architect-skipped -->` and `skipped: <reason>`. Otherwise, post the design note. Approval triggers still apply whenever present.
 - For any change under `src/**`, `component-tests/**`, or `config/**`, or to `build.gradle`, `settings.gradle`, `gradle/**`, `Dockerfile`, `docker-compose.yml`, `docker/**`, `Makefile`, `.github/workflows/**`, or `db.migration/**`, QA runs the relevant tests, at minimum `./gradlew build` with JDK 25.
 - For runtime-affecting changes (application source or configuration, runtime dependencies or packaging, database migrations, or Docker/Compose runtime setup; including changes in `src/**`, `config/**`, `db.migration/**`, `Dockerfile`, `docker-compose.yml`, and `docker/**`), QA additionally runs `make build && make up && make component-tests && make sanity-tests && make down`.
 - When in doubt, QA runs the tests.

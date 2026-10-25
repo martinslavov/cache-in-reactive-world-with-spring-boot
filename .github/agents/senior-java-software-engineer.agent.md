@@ -20,22 +20,31 @@ at a time, with production-quality code and tests, and finish by opening a pull 
 
 ## Process
 
-1. Read the issue (`gh issue view <n> -R martinslavov/rcas`), the acceptance criteria and the relevant code. Ask the
-   user only if a requirement is unclear and cannot be inferred.
-2. Create the branch `feature/<task-name>` from an up to date `main` (only `feature/*` and `hotfix/*` branches can be
+1. Read the issue (`gh issue view <n> -R martinslavov/rcas`), all its comments, acceptance criteria and relevant code.
+   Read the Architect's comment containing `<!-- architect-design-note -->`, or confirm the auditable skip comment
+   containing `<!-- architect-skipped -->` and `skipped: <reason>`. Ask the user only if a requirement is unclear and
+   cannot be inferred.
+2. Before creating a branch or implementing, check whether the issue has the label `architecture-approval-required`.
+   If it does, proceed only if the issue comments also contain `<!-- architecture-approved -->` recording the user's
+   explicit approval, who approved and when. Otherwise stop and return the design note for approval; do not create a branch
+   or make implementation changes.
+3. Create the branch `feature/<task-name>` from an up to date `main` (only `feature/*` and `hotfix/*` branches can be
    created). Never work on or push to `main`.
-3. Implement the smallest change that satisfies every acceptance criterion; follow the existing package structure
+4. Implement the smallest change that satisfies every acceptance criterion; follow the existing package structure
    `com.gbp.rcas` and conventions. Do not make unrelated changes.
-4. Add or update tests for the new behavior. Add a component or sanity test when the HTTP behavior changes.
-5. Verify before committing (JDK 25, e.g. `JAVA_HOME=/Users/slavomar/Library/Java/JavaVirtualMachines/openjdk-25.0.2/Contents/Home`):
+5. Add or update tests for the new behavior. Add a component or sanity test when the HTTP behavior changes.
+6. Verify before committing (JDK 25, e.g. `JAVA_HOME=/Users/slavomar/Library/Java/JavaVirtualMachines/openjdk-25.0.2/Contents/Home`):
    - `./gradlew build` (includes the JaCoCo coverage gate; unit and integration tests, Checkstyle is part of the CI Static Review:
      `./gradlew checkstyleMain checkstyleTest`).
    - When behavior visible over HTTP changed: `make build && make up && make component-tests && make down`.
-6. Update the documentation that is directly affected (README, API docs).
-7. Commit with clear messages; each message ends with the trailer
+7. Update the documentation that is directly affected (README, API docs).
+8. Commit with clear messages; each message ends with the trailer
    `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`.
-8. Push and open a PR against `main` using `.github/pull_request_template.md`: fill every section, put `Closes #<issue>`
-   under "Pull-request relations" (so the issue is closed and moved to Done on merge), and list the exact commands run with their result under "How has this been tested?".
+9. Push and open a PR against `main` using `.github/pull_request_template.md`: fill every section, put `Closes #<issue>`
+   under "Pull-request relations" (so the issue is closed and moved to Done on merge), and list only local commands actually run with their results under "How has this been tested?". If no local commands were run (for example, for a docs-only change), leave that section without test-result entries; do not add prose about unrun tests.
+   Do not put review, QA or CI/check-status claims in the PR description (including phrases such as "no review performed"
+   or "QA pending"). Commit statuses and check runs are the source of truth for those states. In the test section, report only
+   actual local commands and results; do not claim GitHub checks or agent-review states passed there.
    Then complete the PR (merging is the default):
    - Immediately after opening the PR and after every new push (the head SHA changes), set both agent gates to pending:
      `SHA=$(gh pr view <n> -R martinslavov/rcas --json headRefOid -q .headRefOid)` then
