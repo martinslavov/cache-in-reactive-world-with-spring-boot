@@ -50,9 +50,9 @@ The steps below are what the agents follow:
    On blocker/major findings, the engineer fixes, pushes, resets both statuses to pending and hands back to PR Review. Minor/nit
    findings are reported but do not block QA. Count rounds from PR comments containing `<!-- pr-review-round:N -->`; on round 5
    failure apply `needs-human-review`, mention `@martinslavov`, and stop. Only a human removing the label resumes; retain all markers.
-5. **Bounded PR Review loop.** Every PR Review report includes `<!-- pr-review-round:N -->`. Derive the round from all PR comments:
-   `gh api repos/martinslavov/rcas/issues/<pr>/comments --paginate --slurp -q '[.[][] | select(.body | contains("<!-- pr-review-round:"))] | length'`
-   Round = marker count + 1. Blocker/major findings fail the status; the engineer fixes and pushes, resets both statuses, then PR Review
+5. **Bounded PR Review loop.** Every PR Review report includes `<!-- pr-review-round:N -->`. Derive the round from issue comments and review bodies (the report is posted as an issue comment; duplicate N are deduplicated):
+   `(gh api repos/martinslavov/rcas/issues/<pr>/comments --paginate --jq '.[].body'; gh api repos/martinslavov/rcas/pulls/<pr>/reviews --paginate --jq '.[].body') | grep -o '<!-- pr-review-round:[0-9]* -->' | sort -u | wc -l`
+   Round = distinct marker count + 1. Blocker/major findings fail the status; the engineer fixes and pushes, resets both statuses, then PR Review
    repeats before QA. Minor/nit findings do not block QA. On round 5 failure, apply `needs-human-review`, mention `@martinslavov`,
    and stop agent work. Only a human removing the label resumes the loop; retain markers and continue counting above round 5.
 6. **Bounded QA loop.** Every QA failure report comment includes a hidden `<!-- qa-round:N -->` marker. QA derives the next round from the
@@ -77,7 +77,7 @@ Commit messages end with the trailer `Co-authored-by: Copilot <223556219+Copilot
 
 ### Required checks
 
-The `Main protection` ruleset currently requires these status checks: `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review` and `secret-scan`. `PR Review` is an additional workflow gate that must be `success` on the current head SHA before QA or merge; it is intentionally not yet in the ruleset. **No agent may merge unless every ruleset-required check and both agent statuses (`PR Review`, `QA Agent`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge).
+The `Main protection` ruleset currently requires these status checks: `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review`, `secret-scan` and `PR Review`. `PR Review` is a workflow gate that must be `success` on the current head SHA before QA or merge; it is also a required status check in the ruleset (ruleset 25822954). **No agent may merge unless every ruleset-required check and both agent statuses (`PR Review`, `QA Agent`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge).
 Check the current head SHA with `gh pr checks <n> -R martinslavov/rcas`. The unit-tests job also enforces the JaCoCo coverage minimums
 (`./gradlew build`; report with `./gradlew jacocoTestReport`). Dependabot security-update PRs get no `QA Agent` status automatically:
 they need the normal agent flow or a human.

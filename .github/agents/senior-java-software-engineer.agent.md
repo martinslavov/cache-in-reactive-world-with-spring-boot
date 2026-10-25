@@ -45,7 +45,7 @@ at a time, with production-quality code and tests, and finish by opening a pull 
    - Hand over first to `pr-review-agent`, which independently reads the issue and full diff, posts severity-ranked findings and
      sets `PR Review` to a final status on the current head SHA. Do not start QA until this status is `success` on that SHA.
      Minor/nit findings do not block QA. On blocker/major findings, fix them, push, reset both statuses to pending, and hand back
-     to PR Review before QA. Count `<!-- pr-review-round:N -->` markers in PR comments; the next round is the count plus one.
+     to PR Review before QA. Count distinct `<!-- pr-review-round:N -->` markers in PR issue comments and review bodies; the next round is the count plus one.
      On round-5 failure, PR Review applies `needs-human-review`, mentions `@martinslavov`, and stops. Do not commit or merge while
      the label is present; only a human removing it resumes the loop, with markers retained.
    - After PR Review succeeds on the current head SHA, hand over to `senior-qa-engineer`, which tests the PR and sets `QA Agent`
@@ -65,7 +65,7 @@ at a time, with production-quality code and tests, and finish by opening a pull 
      `gh api repos/martinslavov/rcas/pulls/<n>/reviews` and `gh api repos/martinslavov/rcas/pulls/<n>/comments`.
      Human comments (not agents or automation) block auto-merge. Ignore tracking/workflow automation comments. Resolved QA-finding comments
      do not by themselves block merging when QA succeeds on the current head SHA; unresolved blocker/major findings still block it.
-   - The ruleset-required checks are `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review` and `secret-scan`. `PR Review` is an additional workflow gate that must also be `success` on the current head SHA before QA or merge; it is intentionally not yet in the ruleset. **No agent may merge unless every ruleset-required check and both agent statuses (`PR Review`, `QA Agent`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge).
+   - The ruleset-required checks are `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review`, `secret-scan` and `PR Review`. `PR Review` must be `success` on the current head SHA before QA or merge. **No agent may merge unless every ruleset-required check and both agent statuses (`PR Review`, `QA Agent`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge).
    - If ALL checks pass, both `PR Review` and `QA Agent` are `success` on the current head SHA, `needs-human-review` is absent, and there are no human
      comments or unresolved blocker/major findings, merge with `gh pr merge <n> -R martinslavov/rcas --merge --delete-branch` and report it.
      Merging closes the task issue (`Closes #N`) and the tracking issue, and moves the board item to Done automatically.

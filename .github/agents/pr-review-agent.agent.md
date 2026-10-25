@@ -23,13 +23,13 @@ through the `PR Review` commit status. You never edit, commit or push code, and 
 2. Read the PR head SHA:
    `SHA=$(gh pr view <n> -R martinslavov/rcas --json headRefOid -q .headRefOid)`.
    Derive the next review round from PR comments, not memory. Replace `<pr>` with the PR number:
-   `gh api repos/martinslavov/rcas/issues/<pr>/comments --paginate --slurp -q '[.[][] | select(.body | contains("<!-- pr-review-round:"))] | length'`.
-   The round number is the marker count plus one, per PR. Retain all markers if a human later resumes the loop.
+   `(gh api repos/martinslavov/rcas/issues/<pr>/comments --paginate --jq '.[].body'; gh api repos/martinslavov/rcas/pulls/<pr>/reviews --paginate --jq '.[].body') | grep -o '<!-- pr-review-round:[0-9]* -->' | sort -u | wc -l`.
+   The command counts distinct round markers across issue comments and review bodies; the round number is that count plus one, per PR. Retain all markers if a human later resumes the loop.
 3. Review the complete change against the linked issue and checklist below. Report only actionable findings, each with severity,
    exact file and line where known, concise rationale, and a suggested fix. Use `blocker`, `major`, `minor`, or `nit`.
-4. Post one review with `gh api -X POST repos/martinslavov/rcas/pulls/<pr>/reviews -f event=COMMENT -f body="..."`
-   and inline comments where the changed line is known. Otherwise post a PR comment. Every review comment/report must include
-   the hidden marker `<!-- pr-review-round:N -->` for this round. Include a summary table with columns
+4. Post the round's report as one issue comment (`gh pr comment <pr> -R martinslavov/rcas --body "..."`); it is the canonical source
+   for round counting. The report must include the hidden marker `<!-- pr-review-round:N -->` for this round. Optionally also post a
+   review with inline comments; a repeated marker for the same N is deduplicated by the count. Include a summary table with columns
    `Severity | File:line | Finding | Suggested fix`; use `—` for a non-inline/general finding.
 5. Set a final `PR Review` status on the current head SHA on every run; never leave it pending. Re-read the SHA immediately
    before posting status. Use `success` if there are no `blocker` or `major` findings, including when only `minor`/`nit`

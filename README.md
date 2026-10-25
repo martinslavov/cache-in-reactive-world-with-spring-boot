@@ -192,7 +192,7 @@ git push origin v1.0.0
 Recommended repository settings:
 
 - Settings → Actions → General → Workflow permissions: allow workflows to create issues and pull request comments (the PR Issue Tracking workflow also declares its permissions in the YAML).
-- Branch protection / rulesets for `main`: `Main protection` currently requires `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review` and `secret-scan`. `PR Review` is an additional workflow gate that must succeed on the current head SHA before QA or merge, but is intentionally not yet in the ruleset. **No agent may merge unless every ruleset-required check and both agent statuses (`PR Review`, `QA Agent`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge).
+- Branch protection / rulesets for `main`: `Main protection` currently requires `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review`, `secret-scan` and `PR Review`. `PR Review` must succeed on the current head SHA before QA or merge. **No agent may merge unless every ruleset-required check and both agent statuses (`PR Review`, `QA Agent`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge).
 - Security: secret scanning, push protection, Dependabot alerts and security updates enabled. The `Branch naming` ruleset excludes `dependabot/**` so Dependabot can create its branches.
 - Repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token): the Dockerfile uses Docker Hardened Images (`dhi.io`), which need a login to pull. Used by CI Component Tests.
 - Code scanning must be available for the repository to see the CodeQL results.
@@ -233,8 +233,8 @@ are derived from all such PR comment markers, not agent memory. On round-5 failu
 mentions `@martinslavov`, and stops. Only a human removing that label resumes automated work; markers remain the source of truth.
 No agent commits or merges while the label is present. QA uses its own `<!-- qa-round:N -->` markers and the same human-review
 stop. Auto-merge requires all existing ruleset checks plus `PR Review` and `QA Agent` success on the current head SHA, no
-`needs-human-review` label, and no human comments or unresolved findings. The `PR Review` status is an agent gate but is not yet
-included in the `Main protection` ruleset. Rules are in `.github/copilot-instructions.md`.
+`needs-human-review` label, and no human comments or unresolved blocker/major findings. `PR Review` is also a required check in the
+`Main protection` ruleset. Rules are in `.github/copilot-instructions.md`.
 
 ### QA test scope and status
 
