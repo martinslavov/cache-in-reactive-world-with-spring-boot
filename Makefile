@@ -21,8 +21,8 @@ logs:
 
 ## Run the component tests against the running stack
 component-tests:
-	./gradlew componentTest
+	./gradlew :component-tests:componentTest
 
 ## Run only the fast sanity (smoke) tests against the running stack
 sanity-tests:
-	./gradlew sanityTest
+	./gradlew :component-tests:sanityTest

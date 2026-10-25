@@ -72,7 +72,7 @@ jobs:
         with:
           name: sanity-tests-reports
           path: |
-            build/reports/tests/sanityTest/
-            build/test-results/sanityTest/
+            component-tests/build/reports/tests/sanityTest/
+            component-tests/build/test-results/sanityTest/
             infra-logs.txt
           if-no-files-found: ignore

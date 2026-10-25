@@ -59,43 +59,6 @@ tasks.named('test') {
 	useJUnitPlatform()
 }
 
-// Component tests run against the whole stack started with docker compose (see Makefile).
-// They are not part of `build`; run them with `./gradlew componentTest`.
-sourceSets {
-	componentTest {
-		java.srcDir 'src/componentTest/java'
-		compileClasspath += sourceSets.main.output + sourceSets.test.runtimeClasspath
-		runtimeClasspath += output + compileClasspath
-	}
-}
-
-tasks.register('componentTest', Test) {
-	description = 'Runs component tests against the running docker compose stack.'
-	group = 'verification'
-	testClassesDirs = sourceSets.componentTest.output.classesDirs
-	classpath = sourceSets.componentTest.runtimeClasspath
-	useJUnitPlatform()
-	testLogging {
-		events 'passed', 'failed', 'skipped'
-		showStandardStreams = false
-	}
-	outputs.upToDateWhen { false }
-}
-
-tasks.register('sanityTest', Test) {
-	description = 'Runs only the fast sanity (smoke) tests against the running docker compose stack.'
-	group = 'verification'
-	testClassesDirs = sourceSets.componentTest.output.classesDirs
-	classpath = sourceSets.componentTest.runtimeClasspath
-	useJUnitPlatform {
-		includeTags 'sanity'
-	}
-	testLogging {
-		events 'passed', 'failed', 'skipped'
-	}
-	outputs.upToDateWhen { false }
-}
-
 tasks.withType(JavaCompile) {
 	options.compilerArgs << '-Xlint:-deprecation'
 }
