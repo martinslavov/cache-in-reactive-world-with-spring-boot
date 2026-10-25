@@ -304,6 +304,13 @@ At the end of every task the agent reports the total elapsed time from the user'
 The main (orchestrating) agent records the start with `date +%s` at the beginning of the task and computes the difference at the end
 (see `.github/copilot-instructions.md`).
 
+After the merge the same time is recorded on the task issue and the PR as a `<!-- task-elapsed -->` comment
+(start, end and total). Re-running updates the existing comment:
+
+```bash
+scripts/post_task_elapsed.sh <issue> <pr> <start-epoch> [end-epoch]
+```
+
 
 ### Agent run records and dashboard
 
