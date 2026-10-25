@@ -68,6 +68,7 @@ dependencies {
 	testImplementation "org.testcontainers:testcontainers"
 	testImplementation "org.testcontainers:testcontainers-r2dbc"
 	testImplementation "org.testcontainers:testcontainers-postgresql"
+	testImplementation sourceSets.healthcheck.output
 
 }
 
