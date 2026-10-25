@@ -36,4 +36,16 @@ at a time, with production-quality code and tests, and finish by opening a pull 
    `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`.
 8. Push and open a PR against `main` using `.github/pull_request_template.md`: fill every section, put `Closes #<issue>`
    under "Pull-request relations" (so the issue is closed and moved to Done on merge), and list the exact commands run with their result under "How has this been tested?".
-   Do not merge unless the user asks. Report the PR URL and the check results.
+   Then complete the PR (merging is the default):
+   - Wait for all checks: `gh pr checks <n> -R martinslavov/rcas --watch` (or poll it).
+   - Read the comments and reviews: `gh pr view <n> -R martinslavov/rcas --comments` and
+     `gh api repos/martinslavov/rcas/pulls/<n>/reviews` (also `pulls/<n>/comments` for review comments).
+     Ignore automation comments: the `<!-- pr-tracking-link -->` tracking issue comment and `github-actions` bot comments.
+   - If ALL checks pass and there are no other comments or review comments, merge:
+     `gh pr merge <n> -R martinslavov/rcas --merge --delete-branch`, and report the merge. Merging closes the task issue
+     (`Closes #N`) and the tracking issue, and moves the board item to Done automatically.
+   - If a check fails, investigate, fix and push, then wait for the checks again. If checks are pending or their state
+     or the comments cannot be determined, do not merge and report it.
+   - If there are comments or reviews, do not merge; report them.
+   - Override: if the user's task says to keep the PR open (e.g. "leave the PR open", "do not merge"), never merge.
+   Report the PR URL, the check results and the merge status.

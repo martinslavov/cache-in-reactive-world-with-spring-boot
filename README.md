@@ -198,3 +198,8 @@ Custom agents live in `.github/agents/`:
 
 Give a task as `TASK-NAME:<name>` followed by the description. The product owner agent creates the issue, then the engineer
 agent implements it and opens the pull request. The rules are in `.github/copilot-instructions.md`.
+
+By default the engineer agent merges the PR itself (merge commit, branch deleted) once all checks pass and the PR has no comments
+or reviews other than the automated tracking comment. Merging closes the task issue (`Closes #N`) and the tracking issue and moves
+the board item to Done. A failing, pending or unknown check, or any comment/review, blocks the merge and is reported instead.
+Add e.g. "leave the PR open" or "do not merge" to the task to keep the PR open.

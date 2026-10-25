@@ -15,7 +15,8 @@ When a task has the `TASK-NAME:` line, run them one after the other (the main ag
 1. Delegate the whole input to `product-owner-agent`. It returns the issue number, URL and the branch name.
 2. Delegate the issue (number, branch name and the original input) to `senior-java-software-engineer`. It implements the
    task and opens the PR.
-3. Report the issue and PR links to the user. Do not merge unless asked.
+3. Report the issue and PR links and the merge status to the user. The engineer agent merges the PR by default once all checks
+   pass and there are no comments (see the agent file); do not merge if the task says to keep the PR open (e.g. "leave the PR open", "do not merge").
 
 The steps below are what the agents follow:
 
@@ -29,6 +30,11 @@ The steps below are what the agents follow:
 4. **Pull request.** When done, push the branch and open a PR against `main` using `.github/pull_request_template.md`.
    Reference the issue from step 1 under "Pull-request relations" as `Closes #N`: GitHub closes it on merge and `PR Issue Close` moves it to Done.
    The `PR Issue Tracking` workflow adds the tracking issue link to the description.
-   Required checks (unit, component and sanity tests) must pass before merging; do not merge unless asked.
+   Required checks (unit, component and sanity tests) must pass before merging.
+5. **Merge (default).** Wait for all checks, then read the PR comments and reviews, ignoring automation (the `<!-- pr-tracking-link -->`
+   tracking issue comment and `github-actions` bot). If all checks pass and there are no other comments, merge with
+   `gh pr merge <n> -R martinslavov/rcas --merge --delete-branch`; this closes the task issue (`Closes #N`) and the tracking issue and
+   moves the board item to Done. If a check fails, fix it; if checks are pending/unknown or there are comments, do not merge and report.
+   If the task says to keep the PR open (e.g. "leave the PR open", "do not merge"), do not merge.
 
 Commit messages end with the trailer `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`.
