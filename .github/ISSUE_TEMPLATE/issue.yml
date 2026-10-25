@@ -1,0 +1,67 @@
+name: Issue
+description: Report a bug, request an enhancement or describe a task
+body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type
+      options:
+        - Bug
+        - Enhancement
+        - Documentation
+        - Task
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Summarize the problem or the change, with the relevant motivation and context.
+    validations:
+      required: true
+  - type: textarea
+    id: current-behavior
+    attributes:
+      label: Current behavior / steps to reproduce
+      description: For bugs, describe what happens and how to reproduce it. Write `NA` if not applicable.
+      placeholder: |
+        1. ...
+        2. ...
+  - type: textarea
+    id: expected-outcome
+    attributes:
+      label: Expected outcome
+      description: Describe the expected behavior or the result that defines this issue as done.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: List the conditions that must be met to close the issue.
+      value: |
+        - [ ] Criterion A
+        - [ ] Criterion B
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      description: "`major` = breaking change in API, behavior, configuration, data format or dependencies."
+      options:
+        - minor
+        - major
+    validations:
+      required: true
+  - type: textarea
+    id: relations
+    attributes:
+      label: Relations
+      description: Link related issues, pull requests or dependencies.
+      placeholder: "Related to #123"
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add logs, screenshots or any other context.
