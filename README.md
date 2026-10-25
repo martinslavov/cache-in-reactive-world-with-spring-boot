@@ -288,6 +288,6 @@ The main (orchestrating) agent records the start with `date +%s` at the beginnin
 ### Agent run records and dashboard
 
 Each agent appends one versioned, secret-free `<!-- agent-run: {{...}} -->` JSON comment at the end of its run. The schema,
-UTC timestamp requirements and failure-source definitions are in `.github/copilot-instructions.md`. The scheduled
-`Agent Workflow Dashboard` aggregates issue/PR comments; its single issue is identified by `<!-- agent-dashboard -->` and
+UTC timestamp requirements and failure-source definitions are in `.github/copilot-instructions.md`. The
+`Agent Workflow Dashboard` (runs on every push to `main`, daily, and manually from `main`; never on `pull_request`/forks) aggregates issue/PR comments; its single issue is identified by `<!-- agent-dashboard -->` and
 excluded from the task board. If automatic pinning is denied, a repository owner pins the created dashboard once.

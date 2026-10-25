@@ -205,6 +205,14 @@ def render_dashboard(
     return "\n".join(lines) + "\n"
 
 
+def find_dashboard(issues: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
+    """The dashboard is an issue (never a PR) whose body starts with the marker; quoting it elsewhere does not count.
+    If duplicates exist, the oldest wins so every run converges on the same issue."""
+    matches = [item for item in issues if "pull_request" not in item
+               and (item.get("body") or "").lstrip().startswith(DASHBOARD_MARKER)]
+    return min(matches, key=lambda item: item.get("number", 0), default=None)
+
+
 class GitHubClient:
     def __init__(self, token: str):
         self.token = token
@@ -242,7 +250,7 @@ class GitHubClient:
         return results
 
     def publish(self, repo: str, issues: list[dict[str, Any]], body: str) -> str:
-        dashboard = next((item for item in issues if DASHBOARD_MARKER in (item.get("body") or "")), None)
+        dashboard = find_dashboard(issues)
         if dashboard is None:
             dashboard, _ = self.request("POST", f"{API_ROOT}/repos/{repo}/issues", {
                 "title": DASHBOARD_TITLE, "body": body,
