@@ -1,0 +1,5 @@
+# gitleaks configuration: default rules plus allowlist entries. Every entry needs a documented reason.
+[extend]
+useDefault = true
+
+# No allowlist entries are currently needed.

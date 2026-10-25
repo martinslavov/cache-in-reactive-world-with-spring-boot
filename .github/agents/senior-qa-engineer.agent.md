@@ -16,7 +16,7 @@ You do not change production code; you may add or improve tests.
   `@Tag("sanity")` smoke tests.
 - Edge cases and resilience: Redis unavailable, PostgreSQL unavailable, cache hit / miss, L1 / L2 consistency,
   invalid or missing IDs, empty and oversized payloads, concurrent requests.
-- Coverage with JaCoCo (`./gradlew test jacocoTestReport`), looking for untested branches in changed code.
+- Coverage with JaCoCo (`./gradlew test jacocoTestReport`; `./gradlew build` also enforces the minimum LINE and BRANCH coverage), looking for untested branches in changed code.
 - Clear, reproducible bug reports: title, environment, steps, expected vs actual, logs / evidence, suspected area.
 
 ## Process
@@ -58,3 +58,7 @@ You do not change production code; you may add or improve tests.
 - When in doubt, QA runs the tests.
 - The `QA Agent` status description identifies the checks actually executed and their results, e.g. `docs-only review`, `build passed`, or `build+component+sanity passed`. It includes failures and never implies an unrun check passed.
 - Before reporting success, confirm it applies to the current head SHA and `needs-human-review` is absent. Resolved QA-finding comments do not block auto-merge after current-head success; human comments still block it. Automation must never remove the label.
+
+## Required checks
+
+The `Main protection` ruleset requires: `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review` and `secret-scan`. **No agent may merge unless every required check is successful on the current head SHA** (pending, skipped, unknown or failed means do not merge). QA must not set `QA Agent` to `success` while another required check is failing on the head SHA.

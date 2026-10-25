@@ -28,7 +28,7 @@ at a time, with production-quality code and tests, and finish by opening a pull 
    `com.gbp.rcas` and conventions. Do not make unrelated changes.
 4. Add or update tests for the new behavior. Add a component or sanity test when the HTTP behavior changes.
 5. Verify before committing (JDK 25, e.g. `JAVA_HOME=/Users/slavomar/Library/Java/JavaVirtualMachines/openjdk-25.0.2/Contents/Home`):
-   - `./gradlew build` (unit and integration tests, Checkstyle is part of the CI Static Review:
+   - `./gradlew build` (includes the JaCoCo coverage gate; unit and integration tests, Checkstyle is part of the CI Static Review:
      `./gradlew checkstyleMain checkstyleTest`).
    - When behavior visible over HTTP changed: `make build && make up && make component-tests && make down`.
 6. Update the documentation that is directly affected (README, API docs).
@@ -56,6 +56,7 @@ at a time, with production-quality code and tests, and finish by opening a pull 
      `gh api repos/martinslavov/rcas/pulls/<n>/reviews` and `gh api repos/martinslavov/rcas/pulls/<n>/comments`.
      Human comments (not agents or automation) block auto-merge. Ignore tracking/workflow automation comments. Resolved QA-finding comments
      do not by themselves block merging when QA succeeds on the current head SHA; unresolved findings still block it.
+   - Required checks: `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review` and `secret-scan`. **No agent may merge unless every required check is successful on the current head SHA** (pending, skipped, unknown or failed means do not merge).
    - If ALL checks pass, `QA Agent` is `success` on the current head SHA, `needs-human-review` is absent, and there are no human
      comments or unresolved findings, merge with `gh pr merge <n> -R martinslavov/rcas --merge --delete-branch` and report it.
      Merging closes the task issue (`Closes #N`) and the tracking issue, and moves the board item to Done automatically.

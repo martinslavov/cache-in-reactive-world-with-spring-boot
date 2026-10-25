@@ -172,10 +172,12 @@ Workflows live in `.github/workflows`:
 
 | Workflow | Trigger | What it does |
 |----------|---------|--------------|
-| `ci-unit-tests.yml` (CI Unit Tests) | pull request, push to `main`, manual | `./gradlew build` on JDK 25: compiles, runs unit and integration tests, uploads the test report |
+| `ci-unit-tests.yml` (CI Unit Tests) | pull request, push to `main`, manual | `./gradlew build` on JDK 25: compiles, runs unit and integration tests, uploads the test report and the JaCoCo `coverage-report`; `check` fails when LINE or BRANCH coverage drops below the minimums in `build.gradle` (45 % / 15 %; run `./gradlew jacocoTestReport`, report in `build/reports/jacoco/test/`) |
 | `ci-component-tests.yml` (CI Component Tests) | pull request, push to `main`, manual | Builds the image, starts the stack with docker compose (`make up`), runs the component tests, collects the logs and tears everything down (`make down`) |
 | `ci-sanity-tests.yml` (CI Sanity Tests) | pull request, push to `main`, manual | Starts the stack with docker compose and runs only the fast sanity tests (`make sanity-tests`) |
 | `ci-static-review.yml` (CI Static Review) | pull request | Automatic static code review with Checkstyle (`config/checkstyle/checkstyle.xml`, derived from `.github/code-review-guidelines.md`); run locally with `./gradlew checkstyleMain checkstyleTest` |
+| `ci-dependency-review.yml` (CI Dependency Review) | pull request | `dependency-review` job: fails the PR when it adds dependencies with known high or critical vulnerabilities |
+| `ci-secret-scan.yml` (CI Secret Scan) | pull request, push to `main` | `secret-scan` job: gitleaks over the full history (`.gitleaks.toml`, allowlist entries need a documented reason) |
 | `ci-release.yml` (CI Release) | push of a tag `v*` | Builds, runs the tests and creates a GitHub release with the executable jar and generated release notes |
 | `ci-code-review.yml` (CodeQL) | pull request and push to `main`, weekly | Static security analysis, results appear in the Security tab |
 | `ci-pr-issue-tracking.yml` (PR Issue Tracking) | pull request opened | Creates one tracking issue per PR (found again by a hidden marker, so it is never duplicated) and links it in a PR comment |
@@ -190,7 +192,8 @@ git push origin v1.0.0
 Recommended repository settings:
 
 - Settings → Actions → General → Workflow permissions: allow workflows to create issues and pull request comments (the PR Issue Tracking workflow also declares its permissions in the YAML).
-- Branch protection / rulesets for `main`: require the `CI Unit Tests` and `CI Component Tests` checks before merging.
+- Branch protection / rulesets for `main`: require `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review` and `secret-scan` before merging. **No agent may merge unless every required check is successful on the current head SHA** (pending, skipped, unknown or failed means do not merge).
+- Security: secret scanning, push protection, Dependabot alerts and security updates enabled. The `Branch naming` ruleset excludes `dependabot/**` so Dependabot can create its branches.
 - Repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token): the Dockerfile uses Docker Hardened Images (`dhi.io`), which need a login to pull. Used by CI Component Tests.
 - Code scanning must be available for the repository to see the CodeQL results.
 

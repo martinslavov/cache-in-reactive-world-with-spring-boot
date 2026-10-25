@@ -1,6 +1,7 @@
 plugins {
 	id 'java'
 	id 'checkstyle'
+	id 'jacoco'
 	id 'org.springframework.boot' version '4.1.2'
 	id 'io.spring.dependency-management' version '1.1.7'
 }
@@ -61,6 +62,44 @@ jar {
 
 tasks.named('test') {
 	useJUnitPlatform()
+	finalizedBy tasks.named('jacocoTestReport')
+}
+
+// 0.8.13+ is needed to read Java 25 class files
+jacoco {
+	toolVersion = '0.8.14'
+}
+
+tasks.named('jacocoTestReport') {
+	dependsOn tasks.named('test')
+	reports {
+		xml.required = true
+		html.required = true
+	}
+}
+
+// Coverage gate (part of `check`, so of the required unit-tests job): minimums are the measured coverage
+// rounded down to the nearest 5 % (measured: LINE 49.28 %, BRANCH 16.67 %, so 45 % and 15 %); they only prevent regressions.
+tasks.named('jacocoTestCoverageVerification') {
+	dependsOn tasks.named('test')
+	violationRules {
+		rule {
+			limit {
+				counter = 'LINE'
+				value = 'COVEREDRATIO'
+				minimum = 0.45
+			}
+			limit {
+				counter = 'BRANCH'
+				value = 'COVEREDRATIO'
+				minimum = 0.15
+			}
+		}
+	}
+}
+
+tasks.named('check') {
+	dependsOn tasks.named('jacocoTestCoverageVerification')
 }
 
 // Static code review rules (config/checkstyle/checkstyle.xml); run in CI by the CI Static Review workflow
