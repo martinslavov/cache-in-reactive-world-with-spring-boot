@@ -64,6 +64,20 @@ management:
       enabled: false
     health:
       show-details: always
+  # OpenTelemetry (OTLP) export: off by default, enabled by the docker compose monitoring profile
+  # (docker/monitoring/monitoring.env). Metrics are scraped by Prometheus, not pushed.
+  otlp:
+    metrics:
+      export:
+        enabled: false
+  tracing:
+    export:
+      otlp:
+        enabled: false
+  logging:
+    export:
+      otlp:
+        enabled: false
 
 # Environment variables #
 env:

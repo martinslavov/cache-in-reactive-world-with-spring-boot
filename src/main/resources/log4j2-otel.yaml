@@ -1,0 +1,18 @@
+# Used instead of log4j2.yaml (LOGGING_CONFIG) when logs are exported via OTLP, see docker-compose.monitoring
+Configuration:
+  Appenders:
+    Console:
+      name: 'STDOUT'
+      target: 'SYSTEM_OUT'
+      PatternLayout:
+        pattern: "%d [%t] %-5p %c - %m%n"
+      type: 'PatternLayout'
+    OpenTelemetry:
+      name: 'OTEL'
+      captureMapMessageAttributes: true
+      captureContextDataAttributes: '*'
+  Loggers:
+    Root:
+      AppenderRef:
+        - ref: 'STDOUT'
+        - ref: 'OTEL'

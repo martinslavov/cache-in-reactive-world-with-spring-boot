@@ -15,7 +15,7 @@ When a task has the `TASK-NAME:` line, run them one after the other (the main ag
 1. Delegate the whole input to `product-owner-agent`. It returns the issue number, URL and the branch name.
 2. Delegate the issue (number, branch name and the original input) to `senior-java-software-engineer`. It implements the
    task and opens the PR.
-3. Report the issue and PR links and the merge status to the user. The engineer agent merges the PR by default once all checks
+3. Report the issue and PR links, the merge status and the total elapsed time (see "Elapsed time" below) to the user. The engineer agent merges the PR by default once all checks
    pass and there are no comments (see the agent file); do not merge if the task says to keep the PR open (e.g. "leave the PR open", "do not merge").
 
 The steps below are what the agents follow:
@@ -38,3 +38,10 @@ The steps below are what the agents follow:
    If the task says to keep the PR open (e.g. "leave the PR open", "do not merge"), do not merge.
 
 Commit messages end with the trailer `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`.
+
+## Elapsed time (every task)
+
+At the very beginning of every task the main (orchestrating) agent records the start time with `date +%s` (the moment it receives the user's input).
+At the end, after everything is merged and all agents are done, it runs `date +%s` again and the final report to the user MUST state the total
+elapsed time (end minus start, as minutes and seconds) from the user's input until everything is merged and all agents have finished.
+Sub-agents report their own durations to the main agent when asked; the total is always computed by the main agent.

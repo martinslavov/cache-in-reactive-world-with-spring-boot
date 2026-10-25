@@ -63,6 +63,14 @@ services:
       SPRING_R2DBC_PASSWORD: "test"
       SPRING_DATA_REDIS_HOST: "redis"
       SPRING_DATA_REDIS_PORT: "6379"
+      # OTLP export is off by default; `make monitoring-up` enables it (docker/monitoring/monitoring.env)
+      LOGGING_CONFIG: "${RCAS_LOGGING_CONFIG:-classpath:log4j2.yaml}"
+      MANAGEMENT_TRACING_EXPORT_OTLP_ENABLED: "${RCAS_OTLP_TRACING_ENABLED:-false}"
+      MANAGEMENT_LOGGING_EXPORT_OTLP_ENABLED: "${RCAS_OTLP_LOGGING_ENABLED:-false}"
+      MANAGEMENT_TRACING_SAMPLING_PROBABILITY: "${RCAS_TRACING_SAMPLING:-0.1}"
+      MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: "http://otel-collector:4318/v1/traces"
+      MANAGEMENT_OPENTELEMETRY_LOGGING_EXPORT_OTLP_ENDPOINT: "http://otel-collector:4318/v1/logs"
+      OTEL_SERVICE_NAME: "rcas"
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,6 +82,62 @@ services:
       interval: 10s
       timeout: 10s
       retries: 10
+
+  # ------------------------------
+  # Monitoring (profile: monitoring): OpenTelemetry Collector, Prometheus, Loki, Grafana
+  # Started with: make monitoring-up
+  # ------------------------------
+  otel-collector:
+    profiles: ["monitoring"]
+    image: otel/opentelemetry-collector:0.116.1
+    container_name: rcas-otel-collector
+    command: ["--config=/etc/otelcol/config.yaml"]
+    networks:
+      - rcas-docker-network
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    volumes:
+      - ./docker/monitoring/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    depends_on:
+      - loki
+
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v3.0.1
+    container_name: rcas-prometheus
+    networks:
+      - rcas-docker-network
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  loki:
+    profiles: ["monitoring"]
+    image: grafana/loki:3.3.2
+    container_name: rcas-loki
+    networks:
+      - rcas-docker-network
+    ports:
+      - "3100:3100"
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:11.4.0
+    container_name: rcas-grafana
+    networks:
+      - rcas-docker-network
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+    volumes:
+      - ./docker/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+      - loki
 
 networks:
   rcas-docker-network:
