@@ -232,7 +232,14 @@ Both review loops are bounded at five failure rounds. Each PR Review report incl
 are derived from all such PR comment markers, not agent memory. On round-5 failure the agent applies `needs-human-review`,
 mentions `@martinslavov`, and stops. Only a human removing that label resumes automated work; markers remain the source of truth.
 No agent commits or merges while the label is present. QA uses its own `<!-- qa-round:N -->` markers and the same human-review
-stop. Auto-merge requires all existing ruleset checks plus `PR Review` and `QA Agent` success on the current head SHA, no
+stop. CI fix attempts are a separate three-attempt loop tracked by `<!-- ci-fix-attempt:N -->` and
+`<!-- ci-failure-signature:<check name>|<test id or normalized error> -->` in PR comments. The engineer reads the failed
+check and its Actions log/test report, reproduces and re-runs locally before pushing; one `infra:` retry counts as an
+attempt. If attempt 3 still fails or the same signature appears twice consecutively, the engineer applies
+`needs-human-review` and mentions `@martinslavov` with the check, run URL, signature, count and log excerpt. No agent
+commits or merges while the label is present; only a human removes it to resume, retaining the separate CI, QA and PR
+Review markers. After resumption numeric limits are not reapplied, but a repeated CI signature still stops the loop.
+Auto-merge requires all existing ruleset checks plus `PR Review` and `QA Agent` success on the current head SHA, no
 `needs-human-review` label, and no human comments or unresolved blocker/major findings. `PR Review` is also a required check in the
 `Main protection` ruleset. Rules are in `.github/copilot-instructions.md`.
 

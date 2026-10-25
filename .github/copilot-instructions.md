@@ -61,11 +61,30 @@ The steps below are what the agents follow:
    Below round 5, QA sets `QA Agent` to `failure` with actionable findings; the engineer fixes, pushes, resets both statuses and sends the PR through PR Review before QA retests. A human removing the label resumes this loop; thereafter, continue it for subsequent rounds, retaining all markers. On round 5 failure,
    QA sets failure with description `QA iteration limit (5) reached – human review required`, applies `needs-human-review`, and posts an
    escalation comment mentioning `@martinslavov` that summarizes open findings and the round count. Create the label if missing using:
-   `gh label create needs-human-review -R martinslavov/rcas --color B60205 --description "QA iteration limit reached; human review required" 2>/dev/null || true`.
+   `gh label create needs-human-review -R martinslavov/rcas --color B60205 --description "Automated iteration limit reached; human review required" 2>/dev/null || true`.
    Add it via `gh api -X POST repos/martinslavov/rcas/issues/<pr>/labels -f 'labels[]=needs-human-review'`; do not use `gh pr edit` because it
    fails with a Projects classic error. The engineer makes no further fix commits or merge while the label is present. Automated agents never
    remove it; only a human removing it explicitly resumes the loop. Existing round markers remain the source of truth after resumption.
-7. **Merge (default).** Wait for all checks and both `PR Review` and `QA Agent` success on the current head SHA. Before any auto-merge, check the review label with
+7. **Bounded CI fix loop.** For failed non-agent required checks (including `analyze`, `dependency-review` and `secret-scan`),
+   the engineer follows the diagnosis/reproduction commands and signature rules in `senior-java-software-engineer.agent.md`.
+   Read the current head's failed checks with `gh pr checks <pr> -R martinslavov/rcas --json name,state,link`; identify the
+   matching run from `gh run list -R martinslavov/rcas --branch <branch> --json databaseId,name,conclusion,headSha,url`,
+   read `gh run view <id> -R martinslavov/rcas --log-failed` and download test reports when available. The first failing
+   test or normalized error defines `<check name>|<test id or error>`; prefix infrastructure failures with `infra:`.
+   Each fix attempt (including the one allowed infrastructure `gh run rerun <id> -R martinslavov/rcas --failed`) gets one
+   PR issue comment **before** the fix/re-run with `<!-- ci-fix-attempt:N -->` and `<!-- ci-failure-signature:<sig> -->`.
+   N is the count of existing marker comments plus one, not agent memory:
+   `gh api repos/martinslavov/rcas/issues/<pr>/comments --paginate -q '[.[] | select(.body | contains("<!-- ci-fix-attempt:"))] | length'`.
+   If paginated, aggregate via `gh api repos/martinslavov/rcas/issues/<pr>/comments --paginate --slurp | jq '[.[][] | select(.body | contains("<!-- ci-fix-attempt:"))] | length'`.
+   After a push, reset both agent statuses and repeat PR Review before QA. If attempt 3 still fails, or if the current
+   signature matches the immediately preceding attempt's signature (even below 3), stop: apply `needs-human-review` via
+   the Issues API and mention `@martinslavov` with check name, run URL, signature, count and short log excerpt. No fourth
+   attempt, further commit or merge. CI attempts, QA failure rounds (`<!-- qa-round:N -->`) and PR Review rounds
+   (`<!-- pr-review-round:N -->`) are **independent** counters. Any stop uses the same label, with description
+   `Automated iteration limit reached; human review required`. No agent commits or merges while the label is present;
+   automated agents never remove it. Only a human removing it explicitly resumes the loop: keep all markers and continue
+   numbering above the original numeric limit without re-applying that limit; repeated-signature early stop still applies.
+8. **Merge (default).** Wait for all checks and both `PR Review` and `QA Agent` success on the current head SHA. Before any auto-merge, check the review label with
    `gh api repos/martinslavov/rcas/issues/<pr>/labels -q '.[].name | select(. == "needs-human-review")'`; if present, do not merge.
    Ignore tracking/workflow automation comments. Resolved QA findings do not by themselves block auto-merge after QA succeeds on the current
    head SHA; unresolved blocker/major findings and any human (non-agent/non-automation) comment continue to block it. If all checks pass, the label is absent,

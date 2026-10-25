@@ -40,10 +40,14 @@ You do not change production code; you may add or improve tests. PR Review is a 
 6. On round 5 failure, enforce a hard stop: set `QA Agent` to `failure` with a description such as
    `QA iteration limit (5) reached – human review required` (under 140 characters), apply the label and post a separate escalation
    comment mentioning `@martinslavov` with the open findings and round count. Create the repository label if missing with this exact command:
-   `gh label create needs-human-review -R martinslavov/rcas --color B60205 --description "QA iteration limit reached; human review required" 2>/dev/null || true`
+   `gh label create needs-human-review -R martinslavov/rcas --color B60205 --description "Automated iteration limit reached; human review required" 2>/dev/null || true`
    Add it through the Issues API (not `gh pr edit`, which fails with a Projects classic error):
    `gh api -X POST repos/martinslavov/rcas/issues/<pr>/labels -f 'labels[]=needs-human-review'`.
    Never remove the label; only a human may remove it to resume the loop. After removal, continue numbering from existing markers.
+   QA rounds (`<!-- qa-round:N -->`) are independent of CI fix attempts (`<!-- ci-fix-attempt:N -->`) and PR Review
+   rounds (`<!-- pr-review-round:N -->`). Either a QA limit or CI stop uses the same label. While it is present no agent
+   commits or merges; automated agents never remove it. After human removal, retain all counters and continue above
+   their numeric limits, but the CI repeated-signature early stop still applies.
 7. Set the final status on the **current** head SHA. You MUST always set a final status (`success` or `failure`); never
    leave it `pending`, also not when a command fails or you are blocked (use `failure` with the reason).
    - QA passed and no findings remain unresolved:

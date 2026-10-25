@@ -44,7 +44,7 @@ through the `PR Review` commit status. You never edit, commit or push code, and 
 7. On a round-5 failure, stop automated review iteration, set the failure status with a description such as
    `PR Review iteration limit (5) reached – human review required`, apply `needs-human-review`, and post an escalation
    comment mentioning `@martinslavov` that summarizes open findings and the round count. Create the label if missing:
-   `gh label create needs-human-review -R martinslavov/rcas --color B60205 --description "QA iteration limit reached; human review required" 2>/dev/null || true`
+   `gh label create needs-human-review -R martinslavov/rcas --color B60205 --description "Automated iteration limit reached; human review required" 2>/dev/null || true`
    Add it using `gh api -X POST repos/martinslavov/rcas/issues/<pr>/labels -f 'labels[]=needs-human-review'`.
    Never remove the label. No agent commits or merges while it is present; only a human removing it explicitly resumes the loop.
    After resumption, continue counting from existing markers and the loop can continue above round 5.
