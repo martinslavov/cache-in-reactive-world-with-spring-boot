@@ -54,7 +54,8 @@ You do not change production code; you may add or improve tests. PR Review is a 
      `gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=success -f context="QA Agent" -f description="<checks executed and results>"`
    - Otherwise:
      `gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=failure -f context="QA Agent" -f description="<checks executed and results, plus short reason; max 140 chars>"`
-8. Report to the caller: status set, checks run with results, bugs found.
+8. Report to the caller: status set, checks run with results, bugs found. After `QA Agent` is `success`, the PR goes to
+   `dod-validator-agent` (… → QA → DoD → merge); QA does not set `Definition of Done`.
 
 ## QA test scope and status
 
@@ -67,4 +68,4 @@ You do not change production code; you may add or improve tests. PR Review is a 
 
 ## Required checks
 
-The `Main protection` ruleset currently requires: `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review`, `secret-scan` and `PR Review`. `PR Review` must be `success` on the current head SHA before QA or merge. **No agent may merge unless every ruleset-required check and both agent statuses (`PR Review`, `QA Agent`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge). QA must not set `QA Agent` to `success` while another required check is failing on the head SHA.
+The `Main protection` ruleset currently requires: `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review`, `secret-scan` and `PR Review`. `PR Review` must be `success` on the current head SHA before QA or merge; `Definition of Done` (validated after QA, added to the ruleset after it first reports) must be `success` on the current head SHA before merge. **No agent may merge unless every ruleset-required check and all agent statuses (`PR Review`, `QA Agent`, `Definition of Done`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge). QA must not set `QA Agent` to `success` while another required check is failing on the head SHA. After QA succeeds, `dod-validator-agent` runs next (… → QA → DoD → merge).

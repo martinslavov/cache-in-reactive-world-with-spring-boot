@@ -19,6 +19,14 @@ _Describe the tests you ran to verify the change and how to reproduce them._
 
 - List only local commands actually run and their results, e.g. `./gradlew build` (passed). If no local commands were run, leave this section without test-result entries; do not add prose about unrun tests.
 
+# Acceptance criteria → evidence
+
+_One row per acceptance criterion of the linked issue. Evidence must verify the behaviour: a test (file + method + what it asserts), a CI check, or for docs/process criteria a `file:line` or verified command output._
+
+| Criterion | Evidence (test / check / doc) |
+|-----------|-------------------------------|
+| <acceptance criterion> | <e.g. `FooTest#expiresAfterTtl` asserts the entry is gone after the TTL> |
+
 # Checklist
 
 _Place `NA` between brackets when an activity is not applicable._
