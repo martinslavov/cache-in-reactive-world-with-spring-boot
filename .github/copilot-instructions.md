@@ -20,6 +20,10 @@ sets an issue's board Status.
 - When work on an issue starts, move it to `In Progress` (`task_queue.sh move <issue> "In Progress"`) and remove the `backlog`
   label if present. For a queued issue the Product Owner step is already done: start with the Architect step on the existing
   issue. Merging moves the item to `Done`. For queued issues, the elapsed time starts when the issue is picked up from `TODO`.
+- **EPICs** group related sub-issues (GitHub sub-issues) and carry the `epic` label. Move an EPIC to `In Progress` when it is
+  created; it is never processed from the queue itself and has no branch or PR. Its sub-issues are normal tasks (usually created
+  in `Backlog` and moved to `TODO` when ready, respecting dependencies listed in the EPIC). Close the EPIC when all sub-issues
+  are closed. The roadmap of EPICs is in `.github/docs/roadmap.md`.
 
 ## Agents
 
