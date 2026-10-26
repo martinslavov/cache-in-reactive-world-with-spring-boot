@@ -243,7 +243,7 @@ listed risk areas, configuration, dependencies, architecture or cache topology; 
 
 ### Workflow orchestrator
 
-Inspect or seed an issue state with `python3 .github/scripts/orchestrator.py state <issue>` or `python3 .github/scripts/orchestrator.py init <issue> --agent <id> [--state <state>]` (only when the issue has no record yet; agents may seed only `backlog`/`todo`, any other state is a migration that needs `--agent human`). If a transition reports that projection failed, run `python3 .github/scripts/orchestrator.py reconcile <issue>`: it idempotently re-projects the canonical state to the single `state:*` label and the board Status without changing the record. Every workflow stage change goes through `python3 .github/scripts/orchestrator.py transition <issue> <to> --agent <id>` (add `--head-sha <sha>` for the current PR head or `--dry-run` to validate without writing); each agent uses its own id, and human-only transitions use `--agent human`. Rollout starts in report mode: report an orchestrator failure and do not bypass it silently.
+Inspect or seed an issue state with `python3 .github/scripts/orchestrator.py state <issue>` or `python3 .github/scripts/orchestrator.py init <issue> --agent <id> [--state <state>]` (only when the issue has no record yet; `init` seeds only `backlog` or `todo` for any agent, including `human`, and refuses any other `--state` before any GitHub call; later states are reached only through `transition`, which enforces the owner and edge table). If a transition reports that projection failed, run `python3 .github/scripts/orchestrator.py reconcile <issue>`: it idempotently re-projects the canonical state to the single `state:*` label and the board Status without changing the record. Every workflow stage change goes through `python3 .github/scripts/orchestrator.py transition <issue> <to> --agent <id>` (add `--head-sha <sha>` for the current PR head or `--dry-run` to validate without writing); each agent uses its own id, and human-only transitions use `--agent human`. Rollout starts in report mode: report an orchestrator failure and do not bypass it silently. Migrating in-flight tasks to later states is out of scope for #101; it is a separate, human-performed rollout step to be designed later (for example, the remaining EPIC #107 work can add a verified migration).
 
 The PR Review Agent independently reads the issue, the complete diff and surrounding code, then posts findings using severity
 `blocker`, `major`, `minor` or `nit`, including file and line where known. Blocker/major findings fail `PR Review` and return the
@@ -287,7 +287,7 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
 | `TASK-NAME:<name>` | Issue created in `TODO` (default) and the full flow runs immediately |
 | `LABEL:BACKLOG,TASK-NAME:<name>` | Issue created with the `backlog` label in `Backlog`; nothing else runs |
 
-To start a backlog task without a state record, first seed its verified stage with `orchestrator.py init <issue> --state backlog --agent human`,
+To start a backlog task without a state record, first seed it with `orchestrator.py init <issue> --state backlog --agent human`,
 then use `orchestrator.py transition <issue> todo --agent human`; it updates the board and removes the legacy `backlog` label.
 A board change cannot wake up the local Copilot session, so TODO items are picked up oldest first
 after every merged task, or when you ask (for example `RUN-QUEUE`). Agents change stages only through the orchestrator;
@@ -299,7 +299,7 @@ deferred because of the GitHub Free / Copilot Free plan) is in [`.github/docs/ro
 
 ```bash
 .github/scripts/task_queue.sh list                         # open TODO issues, oldest first
-python3 .github/scripts/orchestrator.py init 96 --state todo --agent human # seed a verified existing issue
+python3 .github/scripts/orchestrator.py init 96 --state todo --agent human # seed an existing issue without a record
 python3 .github/scripts/orchestrator.py transition 96 architecture --agent architect-agent
 ```
 

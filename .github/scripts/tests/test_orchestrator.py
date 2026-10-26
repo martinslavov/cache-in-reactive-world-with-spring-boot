@@ -1,5 +1,7 @@
+import io
 import json
 import unittest
+from contextlib import redirect_stderr
 from unittest.mock import Mock
 
 from orchestrator import (
@@ -9,6 +11,7 @@ from orchestrator import (
     Orchestrator,
     OrchestratorError,
     default_record,
+    main,
     parse_record,
     serialize_record,
     transition_record,
@@ -179,23 +182,35 @@ class OrchestratorStateMachineTests(unittest.TestCase):
             return ""
         return runner
 
-    def test_init_by_agent_cannot_seed_later_states(self):
+    def test_init_refuses_later_states_for_every_agent_including_human(self):
         for state in sorted(set(STATE_TABLE) - {"backlog", "todo"}):
-            with self.subTest(state=state):
-                calls = []
-                orchestrator = Orchestrator(self.issue_runner(calls, []))
-                with self.assertRaisesRegex(OrchestratorError, "requires --agent human"):
-                    orchestrator.init(101, state, "senior-java-software-engineer")
-                self.assertEqual(calls, [])
+            for agent in ("senior-java-software-engineer", "architect-agent", "human"):
+                with self.subTest(state=state, agent=agent):
+                    calls = []
+                    orchestrator = Orchestrator(self.issue_runner(calls, []))
+                    with self.assertRaisesRegex(OrchestratorError, "may seed only backlog or todo"):
+                        orchestrator.init(101, state, agent)
+                    self.assertEqual(calls, [])
 
-    def test_init_allows_agent_seed_of_todo_and_human_seed_of_any_state(self):
-        for state, agent in (("todo", "architect-agent"), ("backlog", "x"), ("done", "human"), ("qa", "human")):
-            with self.subTest(state=state):
-                calls = []
-                record = Orchestrator(self.issue_runner(calls, [])).init(101, state, agent)
-                self.assertEqual(record["state"], state)
-                self.assertEqual(record["updated_by"], agent)
-                self.assertTrue(any("POST" in c and c[-1].startswith("body=<!-- task-state:") for c in calls))
+    def test_init_cli_refuses_later_state_with_non_zero_exit_and_no_gh_calls(self):
+        for state, agent in (("qa", "human"), ("done", "human"), ("implementation", "senior-java-software-engineer")):
+            with self.subTest(state=state, agent=agent):
+                runner = Mock(return_value="")
+                with redirect_stderr(io.StringIO()) as err:
+                    code = main(["init", "101", "--state", state, "--agent", agent], runner=runner)
+                self.assertNotEqual(code, 0)
+                self.assertIn("may seed only backlog or todo", err.getvalue())
+                runner.assert_not_called()
+
+    def test_init_allows_backlog_and_todo_for_any_agent(self):
+        for state in ("backlog", "todo"):
+            for agent in ("architect-agent", "human"):
+                with self.subTest(state=state, agent=agent):
+                    calls = []
+                    record = Orchestrator(self.issue_runner(calls, [])).init(101, state, agent)
+                    self.assertEqual(record["state"], state)
+                    self.assertEqual(record["updated_by"], agent)
+                    self.assertTrue(any("POST" in c and c[-1].startswith("body=<!-- task-state:") for c in calls))
 
     def test_init_refused_when_record_exists(self):
         calls = []

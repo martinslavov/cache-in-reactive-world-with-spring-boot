@@ -281,9 +281,9 @@ class Orchestrator:
     def init(self, issue: int, state: str, agent: str) -> dict:
         if not isinstance(agent, str) or not agent:
             raise OrchestratorError("--agent is required")
-        if state not in SEED_STATES and agent != "human":
+        if state not in SEED_STATES:
             raise OrchestratorError(
-                f"seeding state {state!r} is a migration and requires --agent human; agents may seed only backlog or todo"
+                f"init may seed only backlog or todo, not {state!r}; later states must be reached with transition"
             )
         if issue < 1:
             raise OrchestratorError("issue must be a positive number")
@@ -354,10 +354,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     state_parser = subparsers.add_parser("state", help="print the canonical task state")
     state_parser.add_argument("issue", type=issue_number)
-    init_parser = subparsers.add_parser("init", help="seed a record for an issue without one (backlog/todo; other states need --agent human)")
+    init_parser = subparsers.add_parser("init", help="seed a backlog or todo record for an issue without one")
     init_parser.add_argument("issue", type=issue_number)
     init_parser.add_argument("--state", default="todo", choices=sorted(STATE_TABLE))
-    init_parser.add_argument("--agent", required=True, help="seeding actor; later states require human")
+    init_parser.add_argument("--agent", required=True, help="seeding actor id")
     reconcile_parser = subparsers.add_parser("reconcile", help="re-project the canonical state to label and board")
     reconcile_parser.add_argument("issue", type=issue_number)
     transition_parser = subparsers.add_parser("transition", help="validate and record a state transition")
