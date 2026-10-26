@@ -274,6 +274,24 @@ Auto-merge requires all existing ruleset checks plus `PR Review`, `QA Agent` and
 `needs-human-review` label, and no human comments or unresolved blocker/major findings. `PR Review` is also a required check in the
 `Main protection` ruleset. Rules are in `.github/copilot-instructions.md`.
 
+### Task queue: Backlog and TODO
+
+The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Defining`, `TODO`, `In Progress` and `Done`.
+
+| Input | Result |
+|-------|--------|
+| `TASK-NAME:<name>` | Issue created in `TODO` (default) and the full flow runs immediately |
+| `LABEL:BACKLOG,TASK-NAME:<name>` | Issue created with the `backlog` label in `Backlog`; nothing else runs |
+
+To start a backlog task, move its board item to `TODO`. A board move cannot wake up the local Copilot session, so TODO items
+are picked up oldest first after every merged task, or when you ask (for example `RUN-QUEUE`). Work moves the item to
+`In Progress`, and the merge moves it to `Done`.
+
+```bash
+.github/scripts/task_queue.sh list                    # open TODO issues, oldest first
+.github/scripts/task_queue.sh move 96 "In Progress"   # set an issue's board Status
+```
+
 ### Running agents without approval prompts
 
 Approval prompts for file edits and shell commands come from the Copilot CLI/IDE, not from repository rules, so they

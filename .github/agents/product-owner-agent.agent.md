@@ -18,8 +18,8 @@ PostgreSQL over R2DBC). You turn a raw request into a clear, small, testable bac
 
 ## Process
 
-1. Read the input. It starts with `TASK-NAME:<name>` followed by a free-form description. Read the relevant parts of the
-   repository to understand the current behavior.
+1. Read the input. It starts with `TASK-NAME:<name>` or `LABEL:BACKLOG,TASK-NAME:<name>` (`LABEL:` is case-insensitive),
+   followed by a free-form description. Read the relevant parts of the repository to understand the current behavior.
 2. Check for duplicates: `gh issue list -R martinslavov/rcas --state all --search "<keywords>"`. If a matching issue
    exists, report it and stop instead of creating a new one.
 3. Analyze: goal and value, in scope / out of scope, assumptions, risks, impact. Ask the user a question only if a
@@ -29,10 +29,12 @@ PostgreSQL over R2DBC). You turn a raw request into a clear, small, testable bac
    - Body sections: `### Type` (Bug / Enhancement / Documentation / Task), `### Description`,
      `### Current behavior / steps to reproduce` (`NA` if not applicable), `### Acceptance criteria` (checklist),
      `### Out of scope`, `### Notes` (risks, dependencies, hints for the implementer).
-   - Do not add labels or project fields: the `CI Issue Board` workflow puts the issue on the board as `Assessment`.
+   - For `LABEL:BACKLOG` input add `--label backlog` when creating the issue (the label must be set at creation); otherwise
+     add no `backlog` label. Do not set project fields: the `CI Issue Board` workflow puts the issue on the board as
+     `Backlog` (with the label) or `TODO` (without it).
 5. Note whether the issue may affect architecture, database schema/migrations, messaging, public HTTP APIs or security so
    the Architect can evaluate the approval triggers. Do not treat this assessment as design approval or skip the Architect.
-6. Return to the caller: the issue number and URL, the branch name `feature/<task-name>` (derive a short lowercase slug
+6. Return to the caller: the issue number and URL, whether it is a backlog item, the branch name `feature/<task-name>` (derive a short lowercase slug
    with `-` when the name is free text) and a 2-3 line summary of the acceptance criteria.
 
 ## Elapsed time
