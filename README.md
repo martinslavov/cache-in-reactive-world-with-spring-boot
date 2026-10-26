@@ -287,6 +287,10 @@ To start a backlog task, move its board item to `TODO`. A board move cannot wake
 are picked up oldest first after every merged task, or when you ask (for example `RUN-QUEUE`). Work moves the item to
 `In Progress`, and the merge moves it to `Done`.
 
+EPICs (label `epic`) group related sub-issues; they stay `In Progress`, are never processed from the queue themselves and are
+closed when all their sub-issues are done. The roadmap (five levels, the Level 1 Workflow Orchestrator and the features
+deferred because of the GitHub Free / Copilot Free plan) is in [`.github/docs/roadmap.md`](.github/docs/roadmap.md).
+
 ```bash
 .github/scripts/task_queue.sh list                    # open TODO issues, oldest first
 .github/scripts/task_queue.sh move 96 "In Progress"   # set an issue's board Status
