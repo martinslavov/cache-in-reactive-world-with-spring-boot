@@ -21,6 +21,15 @@ def _index(steps, predicate):
     return matches[0]
 
 
+def _jobs(text):
+    body = text.split("\njobs:\n", 1)[1]
+    parts = re.split(r"(?m)^  ([\w-]+):\n", body)[1:]
+    return dict(zip(parts[::2], parts[1::2]))
+
+
+RELEASE_QUEUE = "    concurrency:\n      group: release-tag\n      queue: max\n"
+
+
 class WorkflowSecurityTest(unittest.TestCase):
     def test_workflows_found(self):
         self.assertTrue(WORKFLOWS)
@@ -34,7 +43,7 @@ class WorkflowSecurityTest(unittest.TestCase):
         for path in WORKFLOWS:
             for line in path.read_text(encoding="utf-8").splitlines():
                 match = re.match(r"\s*(?:- )?uses:\s*(.+)$", line)
-                if match:
+                if match and not match.group(1).startswith("./.github/workflows/"):
                     with self.subTest(workflow=path.name, uses=match.group(1)):
                         self.assertRegex(match.group(1), PINNED)
 
@@ -75,6 +84,100 @@ class WorkflowSecurityTest(unittest.TestCase):
         self.assertIn("package-ecosystem: github-actions", text)
         self.assertRegex(text, r"directory: /\s")
         self.assertIn("interval: weekly", text)
+
+    def test_release_tagging_is_limited_to_merged_main_prs_and_fork_fallback(self):
+        text = (ROOT / "workflows" / "ci-tag.yml").read_text(encoding="utf-8")
+        self.assertIn("pull_request:", text)
+        self.assertIn("types: [closed]", text)
+        self.assertIn("github.event.pull_request.merged == true", text)
+        self.assertIn("github.event.pull_request.base.ref == 'main'", text)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)
+        self.assertIn("github.event_name == 'push'", text)
+        self.assertIn(".head.repo.full_name != $repo", text)
+        self.assertIn("pull-requests: read", text)
+        self.assertIn("contents: write", text)
+        self.assertEqual(text.count("github.event.pull_request.merge_commit_sha || github.sha"), 2)
+        self.assertIn("git/tags/$object_sha", text)
+        self.assertIn("release_tag.py existing --sha", text)
+        self.assertIn("uses: ./.github/workflows/ci-release.yml", text)
+        self.assertNotIn("merge_commit_sha ||", text.split("jobs:")[0])
+        self.assertIn("for attempt in $(seq 1 10)", text)
+
+    def test_release_builds_tag_and_prunes_with_job_scoped_write_permissions(self):
+        text = (ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8")
+        self.assertIn('tags:\n      - "v**"', text)
+        self.assertIn("workflow_call:", text)
+        self.assertIn("required: true", text)
+        self.assertIn("contents: write", text)
+        self.assertIn("ref: refs/tags/${{ inputs.tag || github.ref_name }}", text)
+        self.assertIn("./gradlew build", text)
+        self.assertIn("build/libs/*.jar", text)
+        self.assertIn('gh api -X DELETE "repos/$REPO/releases/$release_id"', text)
+        self.assertIn('gh api -X DELETE "repos/$REPO/git/refs/tags/$tag"', text)
+
+    def test_prune_job_does_not_execute_repository_code_with_write_token(self):
+        text = (ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8")
+        prune = _jobs(text)["prune"]
+        self.assertIn("contents: write", prune)
+        self.assertNotIn("actions/checkout", prune)
+        self.assertNotIn(".github/scripts", prune)
+        self.assertNotRegex(prune, r"\bpython3?\b")
+
+    def test_prune_lists_releases_once_and_does_not_treat_release_view_errors_as_absence(self):
+        text = (ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8")
+        prune = _jobs(text)["prune"]
+        self.assertEqual(prune.count('gh api "repos/$REPO/releases" --paginate'), 1)
+        self.assertNotIn("gh release view", prune)
+        self.assertIn("set -euo pipefail", prune)
+        self.assertIn("awk -F '\\t' -v tag=\"$tag\"", prune)
+
+    def test_mutating_release_jobs_share_one_global_job_level_queue(self):
+        critical = {"ci-tag.yml": ("tag",), "ci-release.yml": ("release", "prune")}
+        for workflow, job_names in critical.items():
+            text = (ROOT / "workflows" / workflow).read_text(encoding="utf-8")
+            with self.subTest(workflow=workflow):
+                self.assertNotRegex(text.split("\njobs:\n", 1)[0], r"(?m)^concurrency:")
+                self.assertNotIn("cancel-in-progress", text)
+                self.assertEqual(text.count("group:"), len(job_names))
+            jobs = _jobs(text)
+            for job in job_names:
+                with self.subTest(workflow=workflow, job=job):
+                    self.assertIn(RELEASE_QUEUE, jobs[job])
+        caller = _jobs((ROOT / "workflows" / "ci-tag.yml").read_text(encoding="utf-8"))["release"]
+        self.assertNotIn("concurrency:", caller)
+
+    def test_tag_write_job_is_separated_from_the_read_only_plan_job(self):
+        jobs = _jobs((ROOT / "workflows" / "ci-tag.yml").read_text(encoding="utf-8"))
+        plan, tag = jobs["plan"], jobs["tag"]
+        self.assertIn("contents: read", plan)
+        self.assertIn("pull-requests: read", plan)
+        self.assertNotIn("write", plan)
+        self.assertNotIn("concurrency:", plan)
+        self.assertIn("actions/checkout@", plan)
+        self.assertIn("release_tag.py next", plan)
+        self.assertIn("needs: plan", tag)
+        self.assertIn("contents: write", tag)
+        self.assertNotIn("pull-requests", tag)
+        self.assertNotIn("actions/checkout", tag)
+        self.assertNotIn("uses:", tag)
+        self.assertNotIn(".github/scripts", tag)
+        self.assertNotIn("release_tag.py", tag)
+        self.assertNotRegex(tag, r"\bpython3?\b")
+
+    def test_tag_write_job_validates_inputs_and_recomputes_from_live_tags(self):
+        tag = _jobs((ROOT / "workflows" / "ci-tag.yml").read_text(encoding="utf-8"))["tag"]
+        self.assertIn(r"semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'", tag)
+        self.assertIn("[[ \"$SHA\" =~ ^[0-9a-f]{40}$ ]]", tag)
+        self.assertIn("[[ \"$PLAN_TAG\" =~ $semver ]]", tag)
+        self.assertIn("major | minor | patch)", tag)
+        self.assertIn('repos/$REPO/commits/$SHA" --jq \'.sha\'', tag)
+        self.assertIn("SHA: ${{ github.event.pull_request.merge_commit_sha || github.sha }}", tag)
+        self.assertNotIn("needs.plan.outputs.sha", tag)
+        self.assertLess(tag.index("[[ \"$PLAN_TAG\" =~ $semver ]]"), tag.index("-X POST"))
+        self.assertLess(tag.index("=~ ^[0-9a-f]{40}$"), tag.index("-X POST"))
+        self.assertIn("is stale; allocating", tag)
+        self.assertIn("already tagged", tag)
+        self.assertIn("for attempt in $(seq 1 10)", tag)
 
 
 if __name__ == "__main__":

@@ -1,19 +1,34 @@
 # Runs the tests and publishes a GitHub release with the executable jar.
 # Release notes are generated from the merged pull requests and commits.
-# Trigger it by pushing a tag, for example: git tag v1.0.0 && git push origin v1.0.0
+# Called by ci-tag.yml after merges into main; a manually pushed tag also triggers it,
+# for example: git tag v1.0.0 && git push origin v1.0.0. An existing release is left unchanged.
+# Each successful release keeps only the two newest stable vX.Y.Z releases and tags.
 name: CI Release
 
 on:
   push:
     tags:
       - "v**"
+  workflow_call:
+    inputs:
+      tag:
+        description: Existing tag to release
+        required: true
+        type: string
 
 permissions: {}
+
+env:
+  KEEP_RELEASES: "2"
 
 jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Same global queue as the ci-tag.yml tag job, so manual tag pushes and automatic releases never overlap.
+    concurrency:
+      group: release-tag
+      queue: max
     permissions:
       contents: write
 
@@ -21,6 +36,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
           persist-credentials: false
 
       - name: Set up JDK 25
@@ -38,5 +54,61 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" build/libs/*.jar --title "$TAG" --generate-notes --verify-tag
+          TAG: ${{ inputs.tag || github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+            echo "Release $TAG already exists"
+            exit 0
+          fi
+          gh release create "$TAG" build/libs/*.jar -R "$REPO" --title "$TAG" --generate-notes --verify-tag
+
+  prune:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Pruning deletes tags/releases; serializing it in the global queue prevents two runs deleting the same tag.
+    concurrency:
+      group: release-tag
+      queue: max
+    permissions:
+      contents: write
+
+    steps:
+      - name: Delete old releases and tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Fetch the complete release list before deleting anything. If this API call
+          # fails (including on a later page), set -e and pipefail stop the step closed.
+          release_rows=$(gh api "repos/$REPO/releases" --paginate \
+            --jq '.[] | [.tag_name, (.id | tostring)] | @tsv')
+
+          # Match stable SemVer only, then sort each numeric component descending.
+          old_tags=$(gh api "repos/$REPO/git/matching-refs/tags/v" --paginate \
+            --jq '.[].ref | sub("^refs/tags/"; "")' \
+            | awk '/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ { sub(/^v/, ""); print }' \
+            | sort -t. -k1,1nr -k2,2nr -k3,3nr \
+            | sed 's/^/v/')
+
+          retained=0
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] || continue
+            if (( retained < KEEP_RELEASES )); then
+              ((retained += 1))
+              continue
+            fi
+
+            # Delete a release by its ID first; only then remove its tag ref. When no
+            # release was listed for a tag, remove only the orphaned tag ref.
+            release_id=$(awk -F '\t' -v tag="$tag" '$1 == tag { print $2; exit }' <<< "$release_rows")
+            if [[ -n "$release_id" ]]; then
+              gh api -X DELETE "repos/$REPO/releases/$release_id"
+            fi
+            gh api -X DELETE "repos/$REPO/git/refs/tags/$tag"
+            echo "Deleted $tag"
+          done <<< "$old_tags"

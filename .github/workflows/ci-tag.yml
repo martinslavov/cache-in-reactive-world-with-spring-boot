@@ -1,0 +1,202 @@
+# Tags every merged PR commit on main with the next SemVer tag, publishes a GitHub release with the jar.
+# A push fallback handles fork PRs, whose pull_request token cannot create tags.
+# Bump from the merged PR labels: major -> major, enhancement -> minor, otherwise patch; first tag is v0.1.0.
+# Re-running for an already tagged commit creates no new tag.
+# Privilege separation: the read-only plan job may check out and run the repository helper; the contents:write tag job
+# never checks out the repository or runs repository scripts, and re-validates every value it receives from plan.
+name: CI Tag
+
+on:
+  pull_request:
+    types: [closed]
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+env:
+  KEEP_RELEASES: "2"
+
+jobs:
+  plan:
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.merged == true &&
+       github.event.pull_request.base.ref == 'main' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      bump: ${{ steps.plan.outputs.bump }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Plan tag
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || 0 }}
+          SHA: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          pull_requests=$(gh api "repos/$REPO/commits/$SHA/pulls" \
+            | jq --arg event "$EVENT_NAME" --arg repo "$REPO" --arg pr "$PR_NUMBER" \
+            '[.[] | select(.merged_at != null and .base.ref == "main" and (if $event == "push" then .head.repo.full_name != $repo else .number == ($pr | tonumber) end))]')
+          if [ "$pull_requests" = "[]" ]; then
+            echo "Commit $SHA is not associated with a merged PR into main; skipping"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          labels=$(printf '%s' "$pull_requests" | jq -r '[.[].labels[].name] | join(",")')
+          refs=$(gh api "repos/$REPO/git/matching-refs/tags/v" --paginate \
+            --jq '.[] | [.ref | sub("^refs/tags/"; ""), .object.type, .object.sha] | @tsv')
+          resolved_refs=""
+          while IFS=$'\t' read -r tag object_type object_sha; do
+            [ -n "$tag" ] || continue
+            while [ "$object_type" = "tag" ]; do
+              target=$(gh api "repos/$REPO/git/tags/$object_sha" --jq '[.object.type, .object.sha] | @tsv')
+              object_type=${target%%$'\t'*}
+              object_sha=${target#*$'\t'}
+            done
+            if [ "$object_type" = "commit" ]; then
+              resolved_refs+="$tag $object_sha"$'\n'
+            fi
+          done <<< "$refs"
+          existing=$(printf '%s' "$resolved_refs" | python3 .github/scripts/release_tag.py existing --sha "$SHA")
+          if [ -n "$existing" ]; then
+            echo "Commit $SHA is already tagged $existing"
+            echo "tag=$existing" >> "$GITHUB_OUTPUT"
+            echo "bump=patch" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          tag=$(printf '%s' "$resolved_refs" | awk '{ print $1 }' | python3 .github/scripts/release_tag.py next --labels "$labels")
+          bump=patch
+          case ",$labels," in
+            *,enhancement,*) bump=minor ;;
+          esac
+          case ",$labels," in
+            *,major,*) bump=major ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "bump=$bump" >> "$GITHUB_OUTPUT"
+
+  # Minimal privileged job: no checkout and no repository scripts. The plan outputs are untrusted input: the tag
+  # and bump are validated, the commit comes from the event context, and the next version is recomputed from the live
+  # tags on every attempt, so a plan that raced with another run or went stale never allocates a wrong or duplicate version.
+  # Job-level, not workflow-level: the reusable release/prune jobs join the same group after this job finishes,
+  # so automatic (PR closed, main push fallback) and manual tag-push runs share one FIFO queue without self-blocking.
+  # queue: max keeps up to 100 pending jobs instead of replacing the single default pending one; nothing is cancelled.
+  tag:
+    needs: plan
+    if: needs.plan.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: release-tag
+      queue: max
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+
+    steps:
+      - name: Create tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+          PLAN_TAG: ${{ needs.plan.outputs.tag }}
+          PLAN_BUMP: ${{ needs.plan.outputs.bump }}
+        run: |
+          set -euo pipefail
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Refusing to tag: SHA is not a 40-hex commit" >&2
+            exit 1
+          fi
+          if ! [[ "$PLAN_TAG" =~ $semver ]]; then
+            echo "Refusing to tag: planned tag is not strict stable SemVer" >&2
+            exit 1
+          fi
+          case "$PLAN_BUMP" in
+            major | minor | patch) ;;
+            *)
+              echo "Refusing to tag: unknown bump" >&2
+              exit 1
+              ;;
+          esac
+          if [ "$(gh api "repos/$REPO/commits/$SHA" --jq '.sha')" != "$SHA" ]; then
+            echo "Refusing to tag: $SHA is not a commit of $REPO" >&2
+            exit 1
+          fi
+          for attempt in $(seq 1 10); do
+            refs=$(gh api "repos/$REPO/git/matching-refs/tags/v" --paginate \
+              --jq '.[] | [.ref | sub("^refs/tags/"; ""), .object.type, .object.sha] | @tsv')
+            stable_tags=""
+            tagged_here=""
+            while IFS=$'\t' read -r tag object_type object_sha; do
+              [ -n "$tag" ] || continue
+              [[ "$tag" =~ $semver ]] || continue
+              while [ "$object_type" = "tag" ]; do
+                target=$(gh api "repos/$REPO/git/tags/$object_sha" --jq '[.object.type, .object.sha] | @tsv')
+                object_type=${target%%$'\t'*}
+                object_sha=${target#*$'\t'}
+              done
+              [ "$object_type" = "commit" ] || continue
+              stable_tags+="$tag"$'\n'
+              if [ "$object_sha" = "$SHA" ]; then
+                tagged_here+="$tag"$'\n'
+              fi
+            done <<< "$refs"
+            existing=$(printf '%s' "$tagged_here" | sort -V | tail -n 1)
+            if [ -n "$existing" ]; then
+              echo "Commit $SHA is already tagged $existing"
+              echo "tag=$existing" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            newest=$(printf '%s' "$stable_tags" | sort -V | tail -n 1)
+            if [ -z "$newest" ]; then
+              tag=v0.1.0
+            else
+              [[ "$newest" =~ $semver ]]
+              major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]} patch=${BASH_REMATCH[3]}
+              case "$PLAN_BUMP" in
+                major) tag="v$((major + 1)).0.0" ;;
+                minor) tag="v$major.$((minor + 1)).0" ;;
+                patch) tag="v$major.$minor.$((patch + 1))" ;;
+              esac
+            fi
+            if [ "$tag" != "$PLAN_TAG" ]; then
+              echo "Planned $PLAN_TAG is stale; allocating $tag from the current tags"
+            fi
+            [[ "$tag" =~ $semver ]] || { echo "Computed tag is not strict SemVer" >&2; exit 1; }
+            if gh api -X POST "repos/$REPO/git/refs" -f ref="refs/tags/$tag" -f sha="$SHA" --jq .ref; then
+              echo "tag=$tag" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Could not create $tag (attempt $attempt); refreshing refs before retry"
+          done
+          echo "Unable to allocate a release tag after 10 attempts" >&2
+          exit 1
+
+  release:
+    needs: tag
+    if: needs.tag.outputs.tag != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/ci-release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
