@@ -28,7 +28,10 @@ with a merged PR from a fork. It does not execute PR code. Privilege is separate
 `release-tag` with `queue: max` and no cancellation, so automatic and manual tag-push releases are serialized in FIFO
 order and pending jobs are not replaced; there is no workflow-level group, so the reusable call cannot block its caller; the ref creation retries against the latest tags to handle simultaneous version
 allocation. The reusable release workflow checks out the selected tag, builds/tests it, creates the release with the
-jar, and prunes only strict stable `vX.Y.Z` tags/releases. The tag job dereferences annotated Git tags before checking
+jar, and prunes only strict stable `vX.Y.Z` tags/releases. The write-enabled prune job has no checkout and runs no
+repository helper or Python; it sorts matching tags numerically inline. Before deleting anything, it lists releases once
+through the GitHub API and fails closed if that list cannot be fetched. A listed release is deleted by ID before its tag
+ref; a tag with no listed release is deleted as an orphan. The tag job dereferences annotated Git tags before checking
 whether the merge commit already has a tag.
 
 Checkout steps use `persist-credentials: false`, so the job token is not left in `.git/config` while build and test

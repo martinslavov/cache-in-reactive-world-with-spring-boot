@@ -76,25 +76,39 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: main
-          persist-credentials: false
-
       - name: Delete old releases and tags
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          old=$(gh api "repos/$REPO/git/matching-refs/tags/v" --paginate --jq '.[].ref | sub("^refs/tags/"; "")' \
-            | python3 .github/scripts/release_tag.py prune --keep "$KEEP_RELEASES")
-          for tag in $old; do
-            if gh release view "$tag" -R "$REPO" >/dev/null 2>&1; then
-              gh release delete "$tag" -R "$REPO" --yes --cleanup-tag
-            else
-              gh api -X DELETE "repos/$REPO/git/refs/tags/$tag"
+
+          # Fetch the complete release list before deleting anything. If this API call
+          # fails (including on a later page), set -e and pipefail stop the step closed.
+          release_rows=$(gh api "repos/$REPO/releases" --paginate \
+            --jq '.[] | [.tag_name, (.id | tostring)] | @tsv')
+
+          # Match stable SemVer only, then sort each numeric component descending.
+          old_tags=$(gh api "repos/$REPO/git/matching-refs/tags/v" --paginate \
+            --jq '.[].ref | sub("^refs/tags/"; "")' \
+            | awk '/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ { sub(/^v/, ""); print }' \
+            | sort -t. -k1,1nr -k2,2nr -k3,3nr \
+            | sed 's/^/v/')
+
+          retained=0
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] || continue
+            if (( retained < KEEP_RELEASES )); then
+              ((retained += 1))
+              continue
             fi
+
+            # Delete a release by its ID first; only then remove its tag ref. When no
+            # release was listed for a tag, remove only the orphaned tag ref.
+            release_id=$(awk -F '\t' -v tag="$tag" '$1 == tag { print $2; exit }' <<< "$release_rows")
+            if [[ -n "$release_id" ]]; then
+              gh api -X DELETE "repos/$REPO/releases/$release_id"
+            fi
+            gh api -X DELETE "repos/$REPO/git/refs/tags/$tag"
             echo "Deleted $tag"
-          done
+          done <<< "$old_tags"

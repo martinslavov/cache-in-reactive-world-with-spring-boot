@@ -1,5 +1,9 @@
+import os
 import pathlib
 import re
+import subprocess
+import tempfile
+import textwrap
 import unittest
 
 
@@ -112,8 +116,121 @@ class WorkflowSecurityTest(unittest.TestCase):
         self.assertIn("ref: refs/tags/${{ inputs.tag || github.ref_name }}", text)
         self.assertIn("./gradlew build", text)
         self.assertIn("build/libs/*.jar", text)
-        self.assertIn("gh release delete", text)
-        self.assertIn("--cleanup-tag", text)
+        self.assertIn('gh api -X DELETE "repos/$REPO/releases/$release_id"', text)
+        self.assertIn('gh api -X DELETE "repos/$REPO/git/refs/tags/$tag"', text)
+
+    def test_prune_job_does_not_execute_repository_code_with_write_token(self):
+        text = (ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8")
+        prune = _jobs(text)["prune"]
+        self.assertIn("contents: write", prune)
+        self.assertNotIn("actions/checkout", prune)
+        self.assertNotIn(".github/scripts", prune)
+        self.assertNotRegex(prune, r"\bpython3?\b")
+
+    def test_prune_lists_releases_once_and_does_not_treat_release_view_errors_as_absence(self):
+        text = (ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8")
+        prune = _jobs(text)["prune"]
+        self.assertEqual(prune.count('gh api "repos/$REPO/releases" --paginate'), 1)
+        self.assertNotIn("gh release view", prune)
+        self.assertIn("set -euo pipefail", prune)
+        self.assertIn("awk -F '\\t' -v tag=\"$tag\"", prune)
+
+    def test_prune_deletes_release_by_id_before_tag_and_fails_closed_on_release_list_error(self):
+        text = (ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8")
+        step = next(
+            step for step in _steps(text)
+            if "name: Delete old releases and tags" in step
+        )
+        run_content = step.split("        run: |\n", 1)[1]
+        script_lines = []
+        for line in run_content.splitlines():
+            if line.startswith("          "):
+                script_lines.append(line[10:])
+            elif not line.strip():
+                script_lines.append("")
+            else:
+                break
+        script = textwrap.dedent("\n".join(script_lines))
+
+        mock_gh_source = textwrap.dedent(
+            """\
+            #!/usr/bin/env python3
+            import os
+            import sys
+
+            args = sys.argv[1:]
+            endpoint = next(
+                (arg for arg in args if arg.startswith("repos/test/repo/")),
+                "",
+            )
+            with open(os.environ["GH_MOCK_LOG"], "a", encoding="utf-8") as log:
+                if endpoint == "repos/test/repo/releases":
+                    log.write("LIST_RELEASES\\n")
+                    if os.environ.get("FAIL_RELEASE_LIST") == "1":
+                        sys.exit(1)
+                    print("v2.10.0\\t210")
+                elif endpoint == "repos/test/repo/git/matching-refs/tags/v":
+                    log.write("LIST_TAGS\\n")
+                    print("v1.0.0")
+                    print("v2.10.0")
+                    print("v3.9.0")
+                    print("v4.0.0")
+                    print("v1.0.0-rc.1")
+                    print("v01.2.3")
+                elif "-X" in args and "DELETE" in args:
+                    if "/releases/" in endpoint:
+                        log.write("DELETE_RELEASE:" + endpoint.rsplit("/", 1)[1] + "\\n")
+                    else:
+                        log.write("DELETE_TAG:" + endpoint.rsplit("/", 1)[1] + "\\n")
+                else:
+                    sys.exit("unexpected gh invocation: " + repr(args))
+            """
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = pathlib.Path(temp_dir)
+            executable = temp / "gh"
+            executable.write_text(mock_gh_source, encoding="utf-8")
+            executable.chmod(0o755)
+            log = temp / "calls.log"
+            env = os.environ | {
+                "PATH": f"{temp_dir}:{os.environ['PATH']}",
+                "GH_MOCK_LOG": str(log),
+                "REPO": "test/repo",
+                "KEEP_RELEASES": "2",
+            }
+
+            result = subprocess.run(
+                ["bash", "-c", script],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                log.read_text(encoding="utf-8").splitlines(),
+                [
+                    "LIST_RELEASES",
+                    "LIST_TAGS",
+                    "DELETE_RELEASE:210",
+                    "DELETE_TAG:v2.10.0",
+                    "DELETE_TAG:v1.0.0",
+                ],
+                result.stdout + result.stderr,
+            )
+
+            log.write_text("", encoding="utf-8")
+            env["FAIL_RELEASE_LIST"] = "1"
+            result = subprocess.run(
+                ["bash", "-c", script],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(log.read_text(encoding="utf-8").splitlines(), ["LIST_RELEASES"])
 
     def test_mutating_release_jobs_share_one_global_job_level_queue(self):
         critical = {"ci-tag.yml": ("tag",), "ci-release.yml": ("release", "prune")}
