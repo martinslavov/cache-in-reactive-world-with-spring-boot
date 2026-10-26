@@ -186,7 +186,7 @@ Workflows live in `.github/workflows`:
 | `ci-static-review.yml` (CI Static Review) | pull request | Automatic static code review with Checkstyle (`.github/checkstyle/checkstyle.xml`, derived from `.github/code-review-guidelines.md`); run locally with `./gradlew checkstyleMain checkstyleTest` |
 | `ci-dependency-review.yml` (CI Dependency Review) | pull request | `dependency-review` job: fails the PR when it adds dependencies with known high or critical vulnerabilities |
 | `ci-secret-scan.yml` (CI Secret Scan) | pull request, push to `main` | `secret-scan` job: gitleaks over the full history (`.gitleaks.toml`, allowlist entries need a documented reason) |
-| `ci-tag.yml` (CI Tag) | merged PR into `main`; push fallback for fork PRs | Tags merged PR commits using the `major` / `enhancement` labels, then calls CI Release |
+| `ci-tag.yml` (CI Tag) | merged PR into `main`; push fallback for fork PRs | Plans the tag in a read-only job from the `major` / `enhancement` labels, creates it in a minimal write job without checkout, then calls CI Release |
 | `ci-release.yml` (CI Release) | push of a tag `v*`, reusable workflow call | Builds, runs the tests, creates a GitHub release with the executable jar and generated release notes, and keeps only the two newest stable `vX.Y.Z` releases/tags |
 | `ci-code-review.yml` (CodeQL) | pull request and push to `main`, weekly | Static security analysis, results appear in the Security tab |
 | `ci-pr-issue-tracking.yml` (PR Issue Tracking) | pull request opened | Creates one tracking issue per PR (found again by a hidden marker, so it is never duplicated) and links it in a PR comment |

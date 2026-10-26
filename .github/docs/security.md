@@ -19,11 +19,12 @@ Every workflow sets `permissions: {}` at the top level; each job declares only t
 | `ci-pr-issue-tracking.yml` | `create-issue` | `contents: read`, `issues: write`, `pull-requests: write` | `PROJECT_TOKEN` (board step only) |
 | `ci-pr-issue-close.yml` | `close-issue` | `contents: read`, `issues: write`, `pull-requests: read` | `PROJECT_TOKEN` (board step only) |
 | `ci-issue-board.yml` | `add-to-board` | none (`permissions: {}`) | `PROJECT_TOKEN` |
-| `ci-tag.yml` | `tag` | `contents: write`, `pull-requests: read` | `GITHUB_TOKEN` (create tag) |
+| `ci-tag.yml` | `plan` | `contents: read`, `pull-requests: read` | `GITHUB_TOKEN` (read-only; checks out and runs the release helper) |
+| `ci-tag.yml` | `tag` | `contents: write` | `GITHUB_TOKEN` (create tag; no checkout, runs no repository code) |
 | `ci-release.yml` | `release`, `prune` | `contents: write` | `GITHUB_TOKEN` (create release and delete old releases/tags) |
 
 `ci-tag.yml` writes a tag only for a merged PR targeting `main`; the push fallback verifies that the commit is associated
-with a merged PR from a fork. It does not execute PR code. The mutating jobs (`ci-tag.yml` `tag`, `ci-release.yml` `release` and `prune`) use one job-level concurrency group
+with a merged PR from a fork. It does not execute PR code. Privilege is separated: the read-only `plan` job looks up the PR and calculates the tag with the checked-out helper, while the `contents: write` `tag` job does not check out the repository or run repository scripts. It treats the plan outputs as untrusted: the tag must match strict stable SemVer `^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`, the bump must be `major`, `minor` or `patch`, and the commit (taken from the event context, never from a job output) must be a 40-hex SHA that exists in the repository. It recomputes the version from the live tags on each attempt, so a plan that raced or went stale cannot allocate a wrong or duplicate version, and returns the existing tag when the commit is already tagged. The mutating jobs (`ci-tag.yml` `tag`, `ci-release.yml` `release` and `prune`) use one job-level concurrency group
 `release-tag` with `queue: max` and no cancellation, so automatic and manual tag-push releases are serialized in FIFO
 order and pending jobs are not replaced; there is no workflow-level group, so the reusable call cannot block its caller; the ref creation retries against the latest tags to handle simultaneous version
 allocation. The reusable release workflow checks out the selected tag, builds/tests it, creates the release with the

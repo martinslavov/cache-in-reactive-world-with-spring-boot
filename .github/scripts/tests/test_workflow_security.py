@@ -96,7 +96,7 @@ class WorkflowSecurityTest(unittest.TestCase):
         self.assertIn(".head.repo.full_name != $repo", text)
         self.assertIn("pull-requests: read", text)
         self.assertIn("contents: write", text)
-        self.assertIn("github.event.pull_request.merge_commit_sha || github.sha", text)
+        self.assertEqual(text.count("github.event.pull_request.merge_commit_sha || github.sha"), 2)
         self.assertIn("git/tags/$object_sha", text)
         self.assertIn("release_tag.py existing --sha", text)
         self.assertIn("uses: ./.github/workflows/ci-release.yml", text)
@@ -129,6 +129,39 @@ class WorkflowSecurityTest(unittest.TestCase):
                     self.assertIn(RELEASE_QUEUE, jobs[job])
         caller = _jobs((ROOT / "workflows" / "ci-tag.yml").read_text(encoding="utf-8"))["release"]
         self.assertNotIn("concurrency:", caller)
+
+    def test_tag_write_job_is_separated_from_the_read_only_plan_job(self):
+        jobs = _jobs((ROOT / "workflows" / "ci-tag.yml").read_text(encoding="utf-8"))
+        plan, tag = jobs["plan"], jobs["tag"]
+        self.assertIn("contents: read", plan)
+        self.assertIn("pull-requests: read", plan)
+        self.assertNotIn("write", plan)
+        self.assertNotIn("concurrency:", plan)
+        self.assertIn("actions/checkout@", plan)
+        self.assertIn("release_tag.py next", plan)
+        self.assertIn("needs: plan", tag)
+        self.assertIn("contents: write", tag)
+        self.assertNotIn("pull-requests", tag)
+        self.assertNotIn("actions/checkout", tag)
+        self.assertNotIn("uses:", tag)
+        self.assertNotIn(".github/scripts", tag)
+        self.assertNotIn("release_tag.py", tag)
+        self.assertNotRegex(tag, r"\bpython3?\b")
+
+    def test_tag_write_job_validates_inputs_and_recomputes_from_live_tags(self):
+        tag = _jobs((ROOT / "workflows" / "ci-tag.yml").read_text(encoding="utf-8"))["tag"]
+        self.assertIn(r"semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'", tag)
+        self.assertIn("[[ \"$SHA\" =~ ^[0-9a-f]{40}$ ]]", tag)
+        self.assertIn("[[ \"$PLAN_TAG\" =~ $semver ]]", tag)
+        self.assertIn("major | minor | patch)", tag)
+        self.assertIn('repos/$REPO/commits/$SHA" --jq \'.sha\'', tag)
+        self.assertIn("SHA: ${{ github.event.pull_request.merge_commit_sha || github.sha }}", tag)
+        self.assertNotIn("needs.plan.outputs.sha", tag)
+        self.assertLess(tag.index("[[ \"$PLAN_TAG\" =~ $semver ]]"), tag.index("-X POST"))
+        self.assertLess(tag.index("=~ ^[0-9a-f]{40}$"), tag.index("-X POST"))
+        self.assertIn("is stale; allocating", tag)
+        self.assertIn("already tagged", tag)
+        self.assertIn("for attempt in $(seq 1 10)", tag)
 
 
 if __name__ == "__main__":
