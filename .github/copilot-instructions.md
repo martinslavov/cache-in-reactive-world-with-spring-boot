@@ -168,6 +168,10 @@ Check the current head SHA with `gh pr checks <n> -R martinslavov/rcas`. The uni
 (`./gradlew build`; report with `./gradlew jacocoTestReport`). Dependabot security-update PRs get no `QA Agent` status automatically:
 they need the normal agent flow or a human.
 
+### Workflow security
+
+New or changed workflows must use `permissions: {}` at the top level with minimal job-level grants, and every `uses:` pinned to a full 40-character commit SHA with the version tag as a trailing comment (Dependabot keeps pins current). Secrets go only to the step that needs them. See `.github/docs/security.md`.
+
 ### QA test scope and status
 
 - A PR is docs-only only if every changed file matches `*.md`, `.github/agents/**`, `.github/copilot-instructions.md`, `.github/pull_request_template.md`, or `.github/ISSUE_TEMPLATE/**`. QA reviews the documentation and its consistency; tests are not required. Any other changed file means the PR is not docs-only.

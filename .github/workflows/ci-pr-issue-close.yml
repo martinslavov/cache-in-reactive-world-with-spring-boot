@@ -4,18 +4,20 @@ on:
   pull_request:
     types: [closed]
 
-permissions:
-  contents: read
-  issues: write
+permissions: {}
 
 jobs:
   close-issue:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
 
     steps:
       - name: Close tracking issue and collect issues linked with Closes
         id: close
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const { owner, repo } = context.repo;

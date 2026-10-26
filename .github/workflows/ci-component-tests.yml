@@ -1,8 +1,10 @@
 # Starts the whole stack with docker compose (PostgreSQL, Redis and the RCAS image) and runs the
 # component tests against it.
 #
-# Requires the repository secrets DOCKERHUB_USERNAME and DOCKERHUB_TOKEN: the Dockerfile uses
-# Docker Hardened Images (dhi.io), which need a Docker Hub login to pull.
+# Uses the optional repository secrets DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (read-only pull token):
+# the Dockerfile uses Docker Hardened Images (dhi.io). The base image is pulled and the runner logged out
+# before checkout, so no PR-controlled code runs while the credential is stored. Login and pull are
+# skipped when the secrets are not available (fork PRs); the tests still run.
 name: CI Component Tests
 
 on:
@@ -11,8 +13,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: ci-component-tests-${{ github.ref }}
@@ -23,32 +24,71 @@ jobs:
     name: Component Tests (make up && make component-tests)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup java
-        uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: "25"
-
-      - name: Setup gradle
-        uses: gradle/actions/setup-gradle@v6
-
-      - name: Install/Update docker compose cli
-        uses: docker/setup-compose-action@v2
-        with:
-          version: latest
+      # Credential boundary: the Docker Hub token is used only by the steps below, which run before checkout and
+      # execute no PR-controlled code (no make, gradle, scripts or compose). The hardened base image is pulled
+      # from the fixed list in DHI_IMAGES, then the runner is logged out before any build or test step runs.
+      # Fork PRs and Dependabot runs get no secrets: skip the login and pull instead of failing. The tests still run.
+      - name: Check Docker Hub credentials
+        id: dockerhub
+        env:
+          HAS_CREDENTIALS: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+        run: echo "available=$HAS_CREDENTIALS" >> "$GITHUB_OUTPUT"
 
       - name: Log in to Docker Hardened Images registry
-        uses: docker/login-action@v4
+        if: steps.dockerhub.outputs.available == 'true'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: dhi.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # Fixed list, defined here and not read from PR files; keep in sync with the FROM lines of the Dockerfile.
+      - name: Pull hardened base images
+        if: steps.dockerhub.outputs.available == 'true'
+        env:
+          DHI_IMAGES: dhi.io/eclipse-temurin:25
+        run: |
+          for image in $DHI_IMAGES; do
+            docker pull "$image"
+          done
+
+      - name: Log out of Docker Hardened Images registry
+        if: always()
+        run: docker logout dhi.io
+
+      - name: Verify no registry credentials remain
+        if: always()
+        run: |
+          config="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
+          if [ -f "$config" ] && jq -e '(.auths // {}) + (.credHelpers // {}) | has("dhi.io")' "$config" > /dev/null; then
+            echo "::error::dhi.io credentials still present in $config"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup java
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Setup gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      - name: Install/Update docker compose cli
+        uses: docker/setup-compose-action@54042514f505b273907334ae2b9cdbb9a0213c1a # v2.4.0
+        with:
+          version: latest
+
+      # make up builds the image without --pull, so it reuses the cached base image (no registry auth needed).
       - name: Build application jar
         run: make build
 
@@ -68,7 +108,7 @@ jobs:
 
       - name: Upload component test reports and infrastructure logs
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: component-tests-reports
           path: |

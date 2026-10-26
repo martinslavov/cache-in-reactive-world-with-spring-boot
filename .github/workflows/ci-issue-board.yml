@@ -4,13 +4,14 @@ on:
   issues:
     types: [opened]
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   add-to-board:
     if: ${{ !contains(github.event.issue.body, '<!-- agent-dashboard -->') }}
     runs-on: ubuntu-latest
+    # Only PROJECT_TOKEN is used; the workflow token needs no scopes.
+    permissions: {}
 
     steps:
       - name: Add issue to RCAS Tracking board as Backlog or TODO

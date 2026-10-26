@@ -7,10 +7,7 @@ on:
     - cron: "0 6 * * *"
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pull-requests: read
-  issues: write
+permissions: {}
 
 concurrency:
   group: agent-dashboard-${{ github.repository }}
@@ -21,15 +18,20 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
 
     steps:
       - name: Check out main
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.x"
 

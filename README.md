@@ -202,10 +202,12 @@ Recommended repository settings:
 - Settings → Actions → General → Workflow permissions: allow workflows to create issues and pull request comments (the PR Issue Tracking workflow also declares its permissions in the YAML).
 - Branch protection / rulesets for `main`: `Main protection` currently requires `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review`, `secret-scan` and `PR Review`. `PR Review` must succeed on the current head SHA before QA or merge. **No agent may merge unless every ruleset-required check and all agent statuses (`PR Review`, `QA Agent`, `Definition of Done`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge). `Definition of Done` is validated after QA and joins the ruleset after it has reported once.
 - Security: secret scanning, push protection, Dependabot alerts and security updates enabled. The `Branch naming` ruleset excludes `dependabot/**` so Dependabot can create its branches.
-- Repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token): the Dockerfile uses Docker Hardened Images (`dhi.io`), which need a login to pull. Used by CI Component Tests.
+- Repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a read-only Docker Hub access token): the Dockerfile uses Docker Hardened Images (`dhi.io`), which need a login to pull. Used by CI Component Tests and CI Sanity Tests; the login is skipped when the secrets are unavailable (fork PRs).
 - Code scanning must be available for the repository to see the CodeQL results.
 
 PRs from forks get a read-only token, so PR Issue Tracking cannot create issues for them.
+
+See [Security and permissions](.github/docs/security.md) for per-workflow permissions, SHA pinning and Dependabot, fork PR behaviour, token scopes (`PROJECT_TOKEN`, `DOCKERHUB_*`) and per-agent permissions.
 
 ## Branch workflow
 
