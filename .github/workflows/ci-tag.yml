@@ -14,9 +14,10 @@ on:
 permissions: {}
 
 concurrency:
-  # GitHub retains only one pending run per group; scope by merge commit so distinct PRs are not dropped.
-  group: release-tag-${{ github.event.pull_request.merge_commit_sha || github.sha }}
-  cancel-in-progress: false
+  # One global group serializes every release run (pull_request closed and push fallback alike).
+  # queue: max keeps up to 100 pending runs in FIFO order instead of replacing the single default pending run.
+  group: release-tag
+  queue: max
 
 env:
   KEEP_RELEASES: "2"

@@ -23,8 +23,8 @@ Every workflow sets `permissions: {}` at the top level; each job declares only t
 | `ci-release.yml` | `release`, `prune` | `contents: write` | `GITHUB_TOKEN` (create release and delete old releases/tags) |
 
 `ci-tag.yml` writes a tag only for a merged PR targeting `main`; the push fallback verifies that the commit is associated
-with a merged PR from a fork. It does not execute PR code. Concurrency is scoped per merge commit so GitHub does not
-replace pending runs for distinct PRs; the ref creation retries against the latest tags to handle simultaneous version
+with a merged PR from a fork. It does not execute PR code. Release runs are serialized in one global concurrency group with `queue: max` so GitHub keeps pending runs
+in FIFO order instead of replacing them; the ref creation retries against the latest tags to handle simultaneous version
 allocation. The reusable release workflow checks out the selected tag, builds/tests it, creates the release with the
 jar, and prunes only strict stable `vX.Y.Z` tags/releases. The tag job dereferences annotated Git tags before checking
 whether the merge commit already has a tag.

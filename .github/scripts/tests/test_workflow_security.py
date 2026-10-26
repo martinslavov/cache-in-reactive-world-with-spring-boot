@@ -91,8 +91,10 @@ class WorkflowSecurityTest(unittest.TestCase):
         self.assertIn("git/tags/$object_sha", text)
         self.assertIn("release_tag.py existing --sha", text)
         self.assertIn("uses: ./.github/workflows/ci-release.yml", text)
-        self.assertIn("group: release-tag-${{ github.event.pull_request.merge_commit_sha || github.sha }}", text)
-        self.assertIn("cancel-in-progress: false", text)
+        self.assertRegex(text, r"(?m)^  group: release-tag$")
+        self.assertRegex(text, r"(?m)^  queue: max$")
+        self.assertNotIn("cancel-in-progress: true", text)
+        self.assertNotIn("merge_commit_sha ||", text.split("jobs:")[0])
         self.assertIn("for attempt in $(seq 1 10)", text)
 
     def test_release_builds_tag_and_prunes_with_job_scoped_write_permissions(self):
