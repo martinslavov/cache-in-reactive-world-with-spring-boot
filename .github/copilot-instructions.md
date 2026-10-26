@@ -24,6 +24,10 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
   created; it is never processed from the queue itself and has no branch or PR. Its sub-issues are normal tasks (usually created
   in `Backlog` and moved to `TODO` when ready, respecting dependencies listed in the EPIC). Close the EPIC when all sub-issues
   are closed. The roadmap of EPICs is in `.github/docs/roadmap.md`.
+- **Roadmap improvement tasks** (the five roadmap tasks): each task becomes one EPIC with feasible sub-issues in `Backlog`,
+  each needing its own architecture approval. The project runs on GitHub Free and Copilot Free: any part that needs a paid
+  plan (or an organization-owned repository) becomes a separate `Backlog` issue with the `requires-pro` label and is added
+  to `.github/docs/pro-plan.md`. Never start `requires-pro` issues on the current plan.
 
 ## Workflow orchestrator
 

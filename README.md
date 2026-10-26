@@ -295,7 +295,9 @@ its board projection moves active implementation/review work to `In Progress` an
 
 EPICs (label `epic`) group related sub-issues; they stay `In Progress`, are never processed from the queue themselves and are
 closed when all their sub-issues are done. The roadmap (five levels, the Level 1 Workflow Orchestrator and the features
-deferred because of the GitHub Free / Copilot Free plan) is in [`.github/docs/roadmap.md`](.github/docs/roadmap.md).
+deferred because of the GitHub Free / Copilot Free plan) is in [`.github/docs/roadmap.md`](.github/docs/roadmap.md). Each
+of the five roadmap improvement tasks is one EPIC; parts that need a paid plan are `Backlog` issues labelled `requires-pro`
+and listed, with order and prerequisites, in [`.github/docs/pro-plan.md`](.github/docs/pro-plan.md).
 
 ```bash
 .github/scripts/task_queue.sh list                         # open TODO issues, oldest first

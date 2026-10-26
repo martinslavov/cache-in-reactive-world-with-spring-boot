@@ -17,6 +17,20 @@ supervision.
 | 4 | Observability and optimization | Metrics for success, Copilot cost, execution time, retries and code quality | Planned |
 | 5 | Autonomous delivery | From backlog to a production-ready change, including release, rollback strategy and post-release monitoring | Planned |
 
+## Improvement tasks
+
+The roadmap is delivered as five improvement tasks. Each task is one EPIC (label `epic`) with sub-issues in `Backlog`;
+parts that the current plan cannot support become `requires-pro` backlog issues listed in
+[`pro-plan.md`](pro-plan.md).
+
+| Task | Scope | EPIC | Status |
+|------|-------|------|--------|
+| 1 | Central Workflow Orchestrator (level 1) | #107 | In progress |
+| 2 | P0 – fix critical risks in the current process (level 1) | #119 | In progress |
+| 3 | Planned | – | Planned |
+| 4 | Planned | – | Planned |
+| 5 | Planned | – | Planned |
+
 Already available as groundwork: the Backlog/TODO queue (`.github/scripts/task_queue.sh`, level 2), the agent run records
 and dashboard (level 4) and the elapsed-time records (level 4).
 
@@ -68,7 +82,25 @@ Migrating in-flight tasks to later states is out of scope for #101: its `init` s
 states are reached only through validated transitions. A verified migration is a separate, human-performed rollout step
 to be designed later (for example, as part of the remaining EPIC #107 work).
 
+## Task 2 – P0: fix critical risks in the current process
+
+Fix the critical risks before adding new agents (EPIC #119).
+
+| Item | Scope | Sub-issue | Plan |
+|------|-------|-----------|------|
+| 2.1 | Bind every gate result to a commit SHA (`reviewed_sha` / `tested_sha`, compare-and-set before `success`) | #115 | Free |
+| 2.2 | Idempotent automations: stable run key `repo#issue:stage:sha`, upsert, re-run audit | #116 | Free |
+| 2.3 | Separate agent attestations from real CI: CI checks bound to GitHub Actions, no self-attestation | #117 | Free |
+| 2.4 | Least privilege: job-level permissions, SHA-pinned actions, Dependabot, token scopes, fork PRs | #118 | Free |
+| 2.3 / 2.4 | Agent statuses only from a trusted workflow, separate identity per agent | #114 | `requires-pro` |
+
+Overlaps with EPIC #107: #104 keeps the pending reset on push and the branch-behind-main check, #105 enforces 2.1 and 2.3
+at merge time, and #103 stays the orchestrator-level ledger while 2.2 covers workflows, scripts and agent reports.
+
 ## Deferred features (plan limitations)
+
+The full list of work deferred until a paid plan, with order and prerequisites, is in [`pro-plan.md`](pro-plan.md).
+
 
 The project runs on **GitHub Free and Copilot Free**. The following features need a paid Copilot plan (Pro / Pro+) or an
 organization-owned repository and are deferred. They are tracked in the backlog issue #100; re-evaluate them when the plan
