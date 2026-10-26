@@ -3,6 +3,24 @@
 These rules apply when a task starts with a first line `TASK-NAME:<task-name>` (for example `TASK-NAME:code-review-agent` or `TASK-NAME:Code review agent`).
 Tasks without that line are handled normally, without creating an issue, branch or PR.
 
+## Task input and queue (Backlog / TODO)
+
+The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Defining`, `TODO`, `In Progress` and `Done`.
+`.github/scripts/task_queue.sh list` prints open `TODO` issues oldest first; `.github/scripts/task_queue.sh move <issue> <status>`
+sets an issue's board Status.
+
+- `TASK-NAME:<name>` (default): the Product Owner creates the issue without the `backlog` label, so the `CI Issue Board`
+  workflow puts it in `TODO`, and the full flow below runs immediately.
+- `LABEL:BACKLOG,TASK-NAME:<name>` (the `LABEL:` prefix is case-insensitive; the description follows as usual): the Product
+  Owner creates the issue with the `backlog` label, so it lands in `Backlog`. Stop after the issue is created and report its
+  link; no Architect, branch or PR. Backlog items are never processed while they are in `Backlog`.
+- The user starts a backlog task by moving its board item to `TODO`. A board move cannot trigger the local Copilot session,
+  so TODO items are picked up when a session is active: after every merged task and whenever the user asks to process the
+  queue (for example `RUN-QUEUE`), run `task_queue.sh list` and process the items one at a time, oldest first.
+- When work on an issue starts, move it to `In Progress` (`task_queue.sh move <issue> "In Progress"`) and remove the `backlog`
+  label if present. For a queued issue the Product Owner step is already done: start with the Architect step on the existing
+  issue. Merging moves the item to `Done`. For queued issues, the elapsed time starts when the issue is picked up from `TODO`.
+
 ## Agents
 
 Six custom agents (in `.github/agents/`) do the work:
@@ -58,12 +76,14 @@ elapsed time recorded on the issue and PR:
    only when all required checks pass, `PR Review`, `QA Agent` and `Definition of Done` are `success` on the current head SHA, `needs-human-review`
    is absent, and no human comments or unresolved blocker/major findings remain. Resolved findings do not block after the relevant current-head
    status succeeds. Do not merge if the user asks to keep the PR open. After the merge, record the elapsed time on the issue and
-   the PR with `.github/scripts/post_task_elapsed.sh` (see "Elapsed time").
+   the PR with `.github/scripts/post_task_elapsed.sh` (see "Elapsed time"). Then check the queue (`task_queue.sh list`) and
+   continue with the oldest `TODO` issue, if any.
 
 The steps below are what the agents follow:
 
 1. **Issue.** Create a GitHub issue for the task with `gh issue create` (title from the task name, written as readable text and a short description of the goal).
-   The issue form is `.github/ISSUE_TEMPLATE/issue.yml`; the `CI Issue Board` workflow puts it on the board as `Assessment`.
+   The issue form is `.github/ISSUE_TEMPLATE/issue.yml`; the `CI Issue Board` workflow puts it on the board as `Backlog` when it has the
+   `backlog` label, otherwise as `TODO` (see "Task input and queue").
 2. **Branch.** Create the branch `feature/<task-name>` from an up to date `main` and work only there.
    If the value after `TASK-NAME:` is already a slug (lowercase, words separated by `-`), use it as is. Otherwise (free text such as `Code review agent`),
    derive a short, meaningful slug yourself: lowercase, ASCII letters, digits and `-` only, fixing obvious typos, e.g. `feature/code-review-agent`.

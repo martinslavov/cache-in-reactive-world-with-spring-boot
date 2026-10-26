@@ -13,15 +13,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Add issue to RCAS Tracking board as Assessment
+      - name: Add issue to RCAS Tracking board as Backlog or TODO
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           ISSUE_NODE_ID: ${{ github.event.issue.node_id }}
+          STATUS: ${{ contains(github.event.issue.labels.*.name, 'backlog') && 'Backlog' || 'TODO' }}
         run: |
           project=$(gh api graphql -f query='query { user(login: "martinslavov") { projectV2(number: 1) { id field(name: "Status") { ... on ProjectV2SingleSelectField { id options { id name } } } } } }' --jq '.data.user.projectV2')
           project_id=$(jq -r '.id' <<< "$project")
           field_id=$(jq -r '.field.id' <<< "$project")
-          option_id=$(jq -r '.field.options[] | select(.name == "Assessment") | .id' <<< "$project")
+          option_id=$(jq -r '.field.options[] | select(.name == env.STATUS) | .id' <<< "$project")
           item_id=$(gh api graphql \
             -f query='mutation($project: ID!, $content: ID!) { addProjectV2ItemById(input: {projectId: $project, contentId: $content}) { item { id } } }' \
             -f project="$project_id" -f content="$ISSUE_NODE_ID" --jq '.data.addProjectV2ItemById.item.id')
