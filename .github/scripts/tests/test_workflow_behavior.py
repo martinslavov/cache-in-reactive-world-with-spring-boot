@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import re
 import subprocess
 import tempfile
 import textwrap
@@ -40,23 +41,53 @@ MOCK_GH = textwrap.dedent(
     if args[:2] == ["release", "create"]:
         tag = args[2]
         log(["release-create", tag] + [a for a in args[3:] if a.endswith(".jar")])
-        state["releases"].append(tag)
+        state["releases"][tag] = max(state["releases"].values(), default=0) + 1
         save()
         sys.exit(0)
     endpoint = next((a for a in args if a.startswith("repos/test/repo/")), "")
-    if endpoint == "repos/test/repo/commits/" + state["commit"]:
+    jq = flag("--jq") if "--jq" in args else ""
+    if "-X" in args and "DELETE" in args:
+        if endpoint.startswith("repos/test/repo/releases/"):
+            release_id = int(endpoint.rsplit("/", 1)[1])
+            tag = next((t for t, i in state["releases"].items() if i == release_id), None)
+            if tag is None:
+                sys.exit("404 release " + str(release_id))
+            del state["releases"][tag]
+            log(["delete-release", tag])
+        elif endpoint.startswith("repos/test/repo/git/refs/tags/"):
+            tag = endpoint.removeprefix("repos/test/repo/git/refs/tags/")
+            if tag not in state["refs"]:
+                sys.exit("422 reference does not exist: " + tag)
+            if tag in state["releases"]:
+                sys.exit("tag " + tag + " deleted while its release still exists")
+            del state["refs"][tag]
+            log(["delete-tag", tag])
+        else:
+            sys.exit("unexpected gh invocation: " + repr(args))
+    elif endpoint == "repos/test/repo/releases":
+        log(["list-releases"])
+        if state.get("fail_release_list"):
+            sys.exit("502 release list failed")
+        for tag, release_id in state["releases"].items():
+            print(tag + "\t" + str(release_id))
+    elif endpoint == "repos/test/repo/commits/" + state["commit"]:
         print(state["commit"])
     elif endpoint == "repos/test/repo/git/matching-refs/tags/v":
+        log(["list-tags"])
         for tag, sha in state["refs"].items():
-            print(tag + "\\tcommit\\t" + sha)
+            if tag.startswith("v"):
+                print(tag + "\tcommit\t" + sha if ".object.type" in jq else tag)
     elif "-X" in args and "POST" in args and endpoint == "repos/test/repo/git/refs":
         fields = dict(args[i + 1].split("=", 1) for i, a in enumerate(args) if a == "-f")
+        tag = fields["ref"].removeprefix("refs/tags/")
         log(["post", fields["ref"], fields["sha"]])
-        if state.get("fail_posts", 0) > 0:
-            state["fail_posts"] -= 1
+        # A competing run creates the same ref between our tag listing and our POST.
+        if tag in state.get("race", {}):
+            state["refs"][tag] = state["race"].pop(tag)
             save()
-            sys.exit(1)
-        state["refs"][fields["ref"].removeprefix("refs/tags/")] = fields["sha"]
+        if tag in state["refs"]:
+            sys.exit("422 Reference already exists: " + tag)
+        state["refs"][tag] = fields["sha"]
         save()
         print(fields["ref"])
     else:
@@ -86,7 +117,7 @@ def _step(workflow, name, job=None):
 
 
 class MockedGh:
-    def __init__(self, test, refs=None, releases=None, commit=SHA_A, fail_posts=0):
+    def __init__(self, test, refs=None, releases=None, commit=SHA_A, race=None, fail_release_list=False):
         self.temp = tempfile.TemporaryDirectory()
         test.addCleanup(self.temp.cleanup)
         self.path = pathlib.Path(self.temp.name)
@@ -95,8 +126,8 @@ class MockedGh:
         gh.chmod(0o755)
         self.state_file = self.path / "state.json"
         self.state_file.write_text(json.dumps({
-            "refs": refs or {}, "releases": releases or [], "calls": [],
-            "commit": commit, "fail_posts": fail_posts,
+            "refs": refs or {}, "releases": releases or {}, "calls": [],
+            "commit": commit, "race": race or {}, "fail_release_list": fail_release_list,
         }), encoding="utf-8")
         self.output = self.path / "output"
         self.output.write_text("", encoding="utf-8")
@@ -116,6 +147,9 @@ class MockedGh:
 
     def posts(self):
         return [c for c in self.state()["calls"] if c[0] == "post"]
+
+    def deletes(self):
+        return [c for c in self.state()["calls"] if c[0].startswith("delete-")]
 
 
 class TagStepBehaviorTest(unittest.TestCase):
@@ -155,12 +189,13 @@ class TagStepBehaviorTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(gh.posts(), [["post", "refs/tags/v2.0.0", SHA_A]])
 
-    def test_conflicting_ref_creation_is_retried(self):
-        gh = MockedGh(self, fail_posts=1)
+    def test_competing_ref_conflict_refreshes_tags_and_allocates_next_version(self):
+        gh = MockedGh(self, race={"v0.1.0": SHA_B})
         result = self.tag(gh)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(len(gh.posts()), 2)
-        self.assertEqual(gh.state()["refs"], {"v0.1.0": SHA_A})
+        self.assertEqual(gh.posts(), [["post", "refs/tags/v0.1.0", SHA_A], ["post", "refs/tags/v0.2.0", SHA_A]])
+        self.assertEqual(gh.state()["refs"], {"v0.1.0": SHA_B, "v0.2.0": SHA_A})
+        self.assertEqual(gh.output.read_text(encoding="utf-8"), "tag=v0.2.0\n")
 
     def test_malicious_plan_outputs_and_sha_are_rejected_without_posting(self):
         cases = [
@@ -196,19 +231,76 @@ class ReleaseStepBehaviorTest(unittest.TestCase):
         result = gh.run(self.script, TAG="v0.1.0")
         self.assertEqual(result.returncode, 0, result.stderr)
         state = gh.state()
-        self.assertEqual(state["releases"], ["v0.1.0"])
+        self.assertEqual(list(state["releases"]), ["v0.1.0"])
         self.assertEqual(state["calls"], [["release-create", "v0.1.0", "build/libs/rcas-0.0.1.jar"]])
         self.assertTrue((gh.path / "build/libs/rcas-0.0.1.jar").is_file())
 
     def test_existing_release_is_left_unchanged(self):
-        gh = MockedGh(self, releases=["v0.1.0"])
+        gh = MockedGh(self, releases={"v0.1.0": 7})
         self.prepare(gh)
         result = gh.run(self.script, TAG="v0.1.0")
         self.assertEqual(result.returncode, 0, result.stderr)
         state = gh.state()
-        self.assertEqual(state["releases"], ["v0.1.0"])
+        self.assertEqual(state["releases"], {"v0.1.0": 7})
         self.assertEqual(state["calls"], [])
         self.assertIn("already exists", result.stdout)
+
+
+
+STABLE = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+
+
+class PruneStepBehaviorTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.script = _step("ci-release.yml", "Delete old releases and tags", job="prune")
+
+    def inventory(self):
+        refs = {"v1.0.0": SHA_B, "v2.9.0": SHA_B, "v2.10.0": SHA_B, "v1.5.0": SHA_B, "v10.0.0": SHA_B,
+                "v11.0.0-rc.1": SHA_B, "v01.2.3": SHA_B}
+        # v1.5.0 is an orphaned tag without a release.
+        releases = {"v1.0.0": 100, "v2.9.0": 290, "v2.10.0": 210, "v10.0.0": 1000,
+                    "v11.0.0-rc.1": 1100, "v01.2.3": 123}
+        return refs, releases
+
+    def test_prune_keeps_exactly_two_newest_stable_releases_and_tags(self):
+        refs, releases = self.inventory()
+        gh = MockedGh(self, refs=refs, releases=releases)
+        result = gh.run(self.script, KEEP_RELEASES="2")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        state = gh.state()
+        stable_tags = {t for t in state["refs"] if STABLE.match(t)}
+        stable_releases = {t for t in state["releases"] if STABLE.match(t)}
+        self.assertEqual(stable_tags, {"v10.0.0", "v2.10.0"})
+        self.assertEqual(stable_releases, stable_tags)
+        self.assertEqual(state["releases"]["v10.0.0"], 1000)
+        self.assertEqual(state["releases"]["v2.10.0"], 210)
+        # Prerelease and leading-zero tags are not stable SemVer and are never touched.
+        self.assertEqual(state["refs"]["v11.0.0-rc.1"], SHA_B)
+        self.assertEqual(state["refs"]["v01.2.3"], SHA_B)
+        self.assertEqual(state["releases"]["v11.0.0-rc.1"], 1100)
+        self.assertEqual(state["releases"]["v01.2.3"], 123)
+
+        deletes = gh.deletes()
+        self.assertCountEqual(deletes, [["delete-tag", "v1.5.0"], ["delete-release", "v2.9.0"],
+                                        ["delete-tag", "v2.9.0"], ["delete-release", "v1.0.0"],
+                                        ["delete-tag", "v1.0.0"]])
+        for tag in ("v2.9.0", "v1.0.0"):
+            with self.subTest(tag=tag):
+                self.assertLess(deletes.index(["delete-release", tag]), deletes.index(["delete-tag", tag]))
+        self.assertNotIn(["delete-release", "v1.5.0"], deletes)
+
+    def test_release_list_failure_deletes_nothing(self):
+        refs, releases = self.inventory()
+        gh = MockedGh(self, refs=refs, releases=releases, fail_release_list=True)
+        result = gh.run(self.script, KEEP_RELEASES="2")
+        self.assertNotEqual(result.returncode, 0)
+        state = gh.state()
+        self.assertEqual(state["refs"], refs)
+        self.assertEqual(state["releases"], releases)
+        self.assertEqual(state["calls"], [["list-releases"]])
+        self.assertEqual(gh.deletes(), [])
 
 
 if __name__ == "__main__":
