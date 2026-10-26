@@ -232,7 +232,8 @@ Custom agents live in `.github/agents/`:
 | `dod-validator-agent` | Definition of Done Validator: starts after current-head `QA Agent` success, maps every acceptance criterion to behaviour-verifying evidence, posts the AC → evidence table and sets `Definition of Done`; never changes code |
 
 Give a task as `TASK-NAME:<name>` followed by the description. The workflow is Product Owner → Architect (design note or auditable skip) →
-explicit user approval when required → Engineer → PR Review → QA → DoD → merge. For architecture changes (new module/layer/component or cache
+explicit user approval when required → Engineer → PR Review → QA → DoD → merge → elapsed time recorded on the issue and PR
+(`.github/scripts/post_task_elapsed.sh`). For architecture changes (new module/layer/component or cache
 topology), database schema/migrations, messaging/Kafka, public HTTP API or security changes, the Architect applies
 `architecture-approval-required`; the orchestrator must wait for the user's explicit approval recorded on the issue as
 `<!-- architecture-approved -->` before the Engineer creates a branch or starts implementation. The Engineer reads the design note

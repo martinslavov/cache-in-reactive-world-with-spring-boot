@@ -1,6 +1,6 @@
 ---
 name: senior-java-software-engineer
-description: Senior Java Software Engineer. Implements a GitHub issue end to end for RCAS - branch, code, tests, commits and a pull request. Use after product-owner-agent created the issue.
+description: Senior Java Software Engineer. Implements a GitHub issue end to end for RCAS - branch, code, tests, commits and a pull request. Use after architect-agent posted a design note or skip (and, when required, the user approved); hands over to pr-review-agent.
 tools: ["read", "edit", "search", "execute"]
 ---
 
