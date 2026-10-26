@@ -57,7 +57,7 @@ or durable state across many runs is needed.
 
 | Sub-issue | Scope |
 |-----------|-------|
-| #101 | Task state machine and state record (foundation) |
+| #101 | Task state machine and state record (foundation) — In progress |
 | #102 | Task locks: a single active agent per task |
 | #103 | Idempotent action ledger |
 | #104 | Freshness gate: reject stale results and stale branches |

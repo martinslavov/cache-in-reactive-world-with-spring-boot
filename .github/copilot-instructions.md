@@ -6,24 +6,30 @@ Tasks without that line are handled normally, without creating an issue, branch 
 ## Task input and queue (Backlog / TODO)
 
 The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Defining`, `TODO`, `In Progress` and `Done`.
-`.github/scripts/task_queue.sh list` prints open `TODO` issues oldest first; `.github/scripts/task_queue.sh move <issue> <status>`
-sets an issue's board Status.
+`.github/scripts/task_queue.sh list` prints open `TODO` issues oldest first. `task_queue.sh move` is an internal board projection only; agents must not use it to change task stages.
 
 - `TASK-NAME:<name>` (default): the Product Owner creates the issue without the `backlog` label, so the `CI Issue Board`
   workflow puts it in `TODO`, and the full flow below runs immediately.
 - `LABEL:BACKLOG,TASK-NAME:<name>` (the `LABEL:` prefix is case-insensitive; the description follows as usual): the Product
   Owner creates the issue with the `backlog` label, so it lands in `Backlog`. Stop after the issue is created and report its
   link; no Architect, branch or PR. Backlog items are never processed while they are in `Backlog`.
-- The user starts a backlog task by moving its board item to `TODO`. A board move cannot trigger the local Copilot session,
-  so TODO items are picked up when a session is active: after every merged task and whenever the user asks to process the
-  queue (for example `RUN-QUEUE`), run `task_queue.sh list` and process the items one at a time, oldest first.
-- When work on an issue starts, move it to `In Progress` (`task_queue.sh move <issue> "In Progress"`) and remove the `backlog`
-  label if present. For a queued issue the Product Owner step is already done: start with the Architect step on the existing
-  issue. Merging moves the item to `Done`. For queued issues, the elapsed time starts when the issue is picked up from `TODO`.
+- To start a backlog task, seed a missing record with `orchestrator.py init <issue> --state backlog`, then the human uses
+  `orchestrator.py transition <issue> todo --agent human`; the transition projects the board Status and removes the legacy
+  `backlog` label. Agents must not use `task_queue.sh move` directly to change a task stage.
+- TODO items are picked up when a session is active: after every merged task and whenever the user asks to process the queue
+  (for example `RUN-QUEUE`), run `task_queue.sh list` and process items one at a time, oldest first. For a queued issue the
+  Product Owner step is already done: the Architect starts it with `todo → architecture` using its own agent id. Merging
+  projects the item to `Done`. For queued issues, elapsed time starts when picked up from `TODO`.
 - **EPICs** group related sub-issues (GitHub sub-issues) and carry the `epic` label. Move an EPIC to `In Progress` when it is
   created; it is never processed from the queue itself and has no branch or PR. Its sub-issues are normal tasks (usually created
   in `Backlog` and moved to `TODO` when ready, respecting dependencies listed in the EPIC). Close the EPIC when all sub-issues
   are closed. The roadmap of EPICs is in `.github/docs/roadmap.md`.
+
+## Workflow orchestrator
+
+`.github/scripts/orchestrator.py` owns each task's canonical state record and projects it to one `state:<state>` label and the board Status. Use `python3 .github/scripts/orchestrator.py state <issue>` to inspect it, `init <issue> [--state <state>]` once to seed a new or migrated issue from its verified stage, and `transition <issue> <to> --agent <id> [--head-sha <sha>] [--dry-run]` for every stage change. Never overwrite an existing record with `init`. The acting agent passes its own id; human-only changes use `--agent human`.
+
+Rollout starts in report mode: if an orchestrator call fails, report the failure and do not silently bypass it or proceed as though the transition succeeded.
 
 ## Agents
 

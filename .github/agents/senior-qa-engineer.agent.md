@@ -48,6 +48,7 @@ You do not change production code; you may add or improve tests. PR Review is a 
    rounds (`<!-- pr-review-round:N -->`). Either a QA limit or CI stop uses the same label. While it is present no agent
    commits or merges; automated agents never remove it. After human removal, retain all counters and continue above
    their numeric limits, but the CI repeated-signature early stop still applies.
+   State transition: use `qa → dod` on success or `qa → implementation` on failure, with this agent id.
 7. Set the final status on the **current** head SHA. You MUST always set a final status (`success` or `failure`); never
    leave it `pending`, also not when a command fails or you are blocked (use `failure` with the reason).
    - QA passed and no findings remain unresolved:

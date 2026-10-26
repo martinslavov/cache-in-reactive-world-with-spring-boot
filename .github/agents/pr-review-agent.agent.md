@@ -35,6 +35,7 @@ through the `PR Review` commit status. You never edit, commit or push code, and 
    for round counting. The report must include the hidden marker `<!-- pr-review-round:N -->` for this round. Optionally also post a
    review with inline comments; a repeated marker for the same N is deduplicated by the count. Include a summary table with columns
    `Severity | File:line | Finding | Suggested fix`; use `—` for a non-inline/general finding.
+   State transition: use `pr-review → qa` on current-head success, or `pr-review → implementation` for blocker/major findings, with this agent id.
 5. Set a final `PR Review` status on the current head SHA on every run; never leave it pending. Re-read the SHA immediately
    before posting status. Use `success` if there are no `blocker` or `major` findings, including when only `minor`/`nit`
    findings remain; otherwise use `failure` and a concise count such as `1 blocker, 2 major` (description max 140 chars):
