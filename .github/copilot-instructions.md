@@ -16,7 +16,9 @@ Six custom agents (in `.github/agents/`) do the work:
   concrete behaviour-verifying evidence, posts the AC → evidence table and sets the `Definition of Done` commit status; never
   changes code.
 
-When a task has the `TASK-NAME:` line, run them one after the other (the main agent only coordinates):
+When a task has the `TASK-NAME:` line, run them one after the other (the main agent only coordinates). The sequence is
+Product Owner → Architect (design note or skip) → user approval when required → Engineer → PR Review → QA → DoD → merge →
+elapsed time recorded on the issue and PR:
 
 1. Delegate the whole input to `product-owner-agent`. It returns the issue number, URL and the branch name.
 2. Delegate the issue to `architect-agent`. It posts exactly one design note comment containing
@@ -55,7 +57,8 @@ When a task has the `TASK-NAME:` line, run them one after the other (the main ag
 8. Report the issue and PR links, merge status and total elapsed time (see "Elapsed time" below). The engineer merges by default
    only when all required checks pass, `PR Review`, `QA Agent` and `Definition of Done` are `success` on the current head SHA, `needs-human-review`
    is absent, and no human comments or unresolved blocker/major findings remain. Resolved findings do not block after the relevant current-head
-   status succeeds. Do not merge if the user asks to keep the PR open.
+   status succeeds. Do not merge if the user asks to keep the PR open. After the merge, record the elapsed time on the issue and
+   the PR with `.github/scripts/post_task_elapsed.sh` (see "Elapsed time").
 
 The steps below are what the agents follow:
 
