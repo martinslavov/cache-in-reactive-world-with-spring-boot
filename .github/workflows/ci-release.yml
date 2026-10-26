@@ -25,6 +25,10 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Same global queue as the ci-tag.yml tag job, so manual tag pushes and automatic releases never overlap.
+    concurrency:
+      group: release-tag
+      queue: max
     permissions:
       contents: write
 
@@ -64,6 +68,10 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Pruning deletes tags/releases; serializing it in the global queue prevents two runs deleting the same tag.
+    concurrency:
+      group: release-tag
+      queue: max
     permissions:
       contents: write
 

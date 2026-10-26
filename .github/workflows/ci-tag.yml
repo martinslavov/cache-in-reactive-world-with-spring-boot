@@ -13,12 +13,6 @@ on:
 
 permissions: {}
 
-concurrency:
-  # One global group serializes every release run (pull_request closed and push fallback alike).
-  # queue: max keeps up to 100 pending runs in FIFO order instead of replacing the single default pending run.
-  group: release-tag
-  queue: max
-
 env:
   KEEP_RELEASES: "2"
 
@@ -32,6 +26,12 @@ jobs:
       github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Job-level, not workflow-level: the reusable release/prune jobs join the same group after this job finishes,
+    # so automatic (PR closed, main push fallback) and manual tag-push runs share one FIFO queue without self-blocking.
+    # queue: max keeps up to 100 pending jobs instead of replacing the single default pending one; nothing is cancelled.
+    concurrency:
+      group: release-tag
+      queue: max
     permissions:
       contents: write
       pull-requests: read

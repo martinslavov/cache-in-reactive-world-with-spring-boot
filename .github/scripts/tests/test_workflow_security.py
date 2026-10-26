@@ -21,6 +21,15 @@ def _index(steps, predicate):
     return matches[0]
 
 
+def _jobs(text):
+    body = text.split("\njobs:\n", 1)[1]
+    parts = re.split(r"(?m)^  ([\w-]+):\n", body)[1:]
+    return dict(zip(parts[::2], parts[1::2]))
+
+
+RELEASE_QUEUE = "    concurrency:\n      group: release-tag\n      queue: max\n"
+
+
 class WorkflowSecurityTest(unittest.TestCase):
     def test_workflows_found(self):
         self.assertTrue(WORKFLOWS)
@@ -91,9 +100,6 @@ class WorkflowSecurityTest(unittest.TestCase):
         self.assertIn("git/tags/$object_sha", text)
         self.assertIn("release_tag.py existing --sha", text)
         self.assertIn("uses: ./.github/workflows/ci-release.yml", text)
-        self.assertRegex(text, r"(?m)^  group: release-tag$")
-        self.assertRegex(text, r"(?m)^  queue: max$")
-        self.assertNotIn("cancel-in-progress: true", text)
         self.assertNotIn("merge_commit_sha ||", text.split("jobs:")[0])
         self.assertIn("for attempt in $(seq 1 10)", text)
 
@@ -108,6 +114,21 @@ class WorkflowSecurityTest(unittest.TestCase):
         self.assertIn("build/libs/*.jar", text)
         self.assertIn("gh release delete", text)
         self.assertIn("--cleanup-tag", text)
+
+    def test_mutating_release_jobs_share_one_global_job_level_queue(self):
+        critical = {"ci-tag.yml": ("tag",), "ci-release.yml": ("release", "prune")}
+        for workflow, job_names in critical.items():
+            text = (ROOT / "workflows" / workflow).read_text(encoding="utf-8")
+            with self.subTest(workflow=workflow):
+                self.assertNotRegex(text.split("\njobs:\n", 1)[0], r"(?m)^concurrency:")
+                self.assertNotIn("cancel-in-progress", text)
+                self.assertEqual(text.count("group:"), len(job_names))
+            jobs = _jobs(text)
+            for job in job_names:
+                with self.subTest(workflow=workflow, job=job):
+                    self.assertIn(RELEASE_QUEUE, jobs[job])
+        caller = _jobs((ROOT / "workflows" / "ci-tag.yml").read_text(encoding="utf-8"))["release"]
+        self.assertNotIn("concurrency:", caller)
 
 
 if __name__ == "__main__":
