@@ -163,6 +163,79 @@ class OrchestratorStateMachineTests(unittest.TestCase):
         self.assertEqual(updated["updated_by"], "senior-java-software-engineer")
         self.assertEqual(updated["updated_at"], self.now)
 
+    def issue_runner(self, calls, comments, label_fail=False, board_fail=False):
+        def runner(args):
+            calls.append(args)
+            if args[-1] == "repos/martinslavov/rcas/issues/101":
+                return json.dumps({"number": 101})
+            if args[-1] == "repos/martinslavov/rcas/issues/101/comments":
+                return "\n".join(json.dumps(c) for c in comments)
+            if args[-1] == "repos/martinslavov/rcas/issues/101/labels":
+                return "state:qa\nstate:implementation\nbug"
+            if label_fail and args[:3] == ["gh", "label", "create"]:
+                raise RuntimeError("label down")
+            if board_fail and args[0].endswith("task_queue.sh"):
+                raise RuntimeError("board down")
+            return ""
+        return runner
+
+    def test_init_by_agent_cannot_seed_later_states(self):
+        for state in sorted(set(STATE_TABLE) - {"backlog", "todo"}):
+            with self.subTest(state=state):
+                calls = []
+                orchestrator = Orchestrator(self.issue_runner(calls, []))
+                with self.assertRaisesRegex(OrchestratorError, "requires --agent human"):
+                    orchestrator.init(101, state, "senior-java-software-engineer")
+                self.assertEqual(calls, [])
+
+    def test_init_allows_agent_seed_of_todo_and_human_seed_of_any_state(self):
+        for state, agent in (("todo", "architect-agent"), ("backlog", "x"), ("done", "human"), ("qa", "human")):
+            with self.subTest(state=state):
+                calls = []
+                record = Orchestrator(self.issue_runner(calls, [])).init(101, state, agent)
+                self.assertEqual(record["state"], state)
+                self.assertEqual(record["updated_by"], agent)
+                self.assertTrue(any("POST" in c and c[-1].startswith("body=<!-- task-state:") for c in calls))
+
+    def test_init_refused_when_record_exists(self):
+        calls = []
+        comments = [{"id": 5, "body": serialize_record(self.record()), "author": "x"}]
+        with self.assertRaisesRegex(OrchestratorError, "already has a task-state record"):
+            Orchestrator(self.issue_runner(calls, comments)).init(101, "todo", "human")
+        self.assertFalse(any("POST" in c or "PATCH" in c for c in calls))
+
+    def test_init_requires_agent(self):
+        with self.assertRaisesRegex(OrchestratorError, "--agent is required"):
+            Orchestrator(self.issue_runner([], [])).init(101, "todo", "")
+
+    def test_reconcile_projects_canonical_state_without_changing_record(self):
+        calls = []
+        comments = [{"id": 5, "body": serialize_record(self.record()), "author": "x"}]
+        record = Orchestrator(self.issue_runner(calls, comments)).reconcile(101)
+        self.assertEqual(record, self.record())
+        self.assertFalse(any("PATCH" in c or c[-1].startswith("body=") for c in calls))
+        self.assertTrue(any(c[:3] == ["gh", "label", "create"] and "state:implementation" in c for c in calls))
+        self.assertTrue(any("-X" in c and "DELETE" in c and c[-1].endswith("state:qa") for c in calls))
+        self.assertFalse(any("DELETE" in c and c[-1].endswith("state:implementation") for c in calls))
+        self.assertTrue(any(c[-3:] == ["move", "101", "In Progress"] for c in calls))
+
+    def test_reconcile_recovers_after_each_projection_failure(self):
+        for kwargs in ({"label_fail": True}, {"board_fail": True}):
+            with self.subTest(failure=kwargs):
+                comments = [{"id": 5, "body": serialize_record(self.record("pr-review")), "author": "x"}]
+                with self.assertRaisesRegex(OrchestratorError, "reconcile 101"):
+                    Orchestrator(self.issue_runner([], comments, **kwargs)).transition(
+                        101, "qa", "pr-review-agent", None, False)
+                # canonical record is already qa, so reconcile (no failure) repairs projection
+                comments = [{"id": 5, "body": serialize_record(self.record("qa")), "author": "x"}]
+                calls = []
+                self.assertEqual(Orchestrator(self.issue_runner(calls, comments)).reconcile(101)["state"], "qa")
+                self.assertTrue(any(c[-3:] == ["move", "101", "In Progress"] for c in calls))
+
+    def test_reconcile_requires_record(self):
+        with self.assertRaisesRegex(OrchestratorError, "found 0"):
+            Orchestrator(self.issue_runner([], [])).reconcile(101)
+
 
 if __name__ == "__main__":
     unittest.main()

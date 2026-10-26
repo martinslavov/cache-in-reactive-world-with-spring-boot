@@ -13,7 +13,7 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
 - `LABEL:BACKLOG,TASK-NAME:<name>` (the `LABEL:` prefix is case-insensitive; the description follows as usual): the Product
   Owner creates the issue with the `backlog` label, so it lands in `Backlog`. Stop after the issue is created and report its
   link; no Architect, branch or PR. Backlog items are never processed while they are in `Backlog`.
-- To start a backlog task, seed a missing record with `orchestrator.py init <issue> --state backlog`, then the human uses
+- To start a backlog task, seed a missing record with `orchestrator.py init <issue> --state backlog --agent human`, then the human uses
   `orchestrator.py transition <issue> todo --agent human`; the transition projects the board Status and removes the legacy
   `backlog` label. Agents must not use `task_queue.sh move` directly to change a task stage.
 - TODO items are picked up when a session is active: after every merged task and whenever the user asks to process the queue
@@ -27,7 +27,7 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
 
 ## Workflow orchestrator
 
-`.github/scripts/orchestrator.py` owns each task's canonical state record and projects it to one `state:<state>` label and the board Status. Use `python3 .github/scripts/orchestrator.py state <issue>` to inspect it, `init <issue> [--state <state>]` once to seed a new or migrated issue from its verified stage, and `transition <issue> <to> --agent <id> [--head-sha <sha>] [--dry-run]` for every stage change. Never overwrite an existing record with `init`. The acting agent passes its own id; human-only changes use `--agent human`.
+`.github/scripts/orchestrator.py` owns each task's canonical state record and projects it to one `state:<state>` label and the board Status. Use `python3 .github/scripts/orchestrator.py state <issue>` to inspect it, `init <issue> --agent <id> [--state <state>]` once to seed an issue that has no record (agents may seed only `backlog`/`todo`; any other state is a migration requiring `--agent human`), `reconcile <issue>` to idempotently repair the `state:*` label and board Status from the canonical record after a projection failure, and `transition <issue> <to> --agent <id> [--head-sha <sha>] [--dry-run]` for every stage change. Never overwrite an existing record with `init`. The acting agent passes its own id; human-only changes use `--agent human`.
 
 Rollout starts in report mode: if an orchestrator call fails, report the failure and do not silently bypass it or proceed as though the transition succeeded.
 

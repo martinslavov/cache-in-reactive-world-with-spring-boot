@@ -32,6 +32,7 @@ STATE_TABLE: dict[str, tuple[str | None, frozenset[str]]] = {
     "blocked": (None, frozenset()),
     "human-review": ("human", frozenset()),
 }
+SEED_STATES = frozenset({"backlog", "todo"})
 ACTIVE_STATES = frozenset(STATE_TABLE) - {"done", "blocked", "human-review"}
 BOARD_STATUS = {
     "backlog": "Backlog",
@@ -277,7 +278,13 @@ class Orchestrator:
         script = Path(__file__).resolve().with_name("task_queue.sh")
         self.call(str(script), "move", str(issue), BOARD_STATUS[state])
 
-    def init(self, issue: int, state: str) -> dict:
+    def init(self, issue: int, state: str, agent: str) -> dict:
+        if not isinstance(agent, str) or not agent:
+            raise OrchestratorError("--agent is required")
+        if state not in SEED_STATES and agent != "human":
+            raise OrchestratorError(
+                f"seeding state {state!r} is a migration and requires --agent human; agents may seed only backlog or todo"
+            )
         if issue < 1:
             raise OrchestratorError("issue must be a positive number")
         if state not in STATE_TABLE:
@@ -288,9 +295,24 @@ class Orchestrator:
         for comment in self.get_comments(issue):
             if STATE_MARKER.search(comment.get("body", "")):
                 raise OrchestratorError(f"issue #{issue} already has a task-state record")
-        record = default_record(issue, state, "human")
+        record = default_record(issue, state, agent)
         self.write_record(issue, record, None)
-        self.project(issue, state)
+        self.project_or_report(issue, state)
+        return record
+
+    def project_or_report(self, issue: int, state: str) -> None:
+        try:
+            self.project(issue, state)
+        except Exception as exc:
+            raise OrchestratorError(
+                f"state comment was updated, but projection failed: {exc}; "
+                f"run `orchestrator.py reconcile {issue}` to repair the label and board"
+            ) from exc
+
+    def reconcile(self, issue: int) -> dict:
+        """Re-project the canonical state to label and board; never changes the record."""
+        record, _ = self.get_record(issue)
+        self.project(issue, record["state"])
         return record
 
     def prepare_transition(
@@ -317,10 +339,7 @@ class Orchestrator:
         if dry_run:
             return updated
         self.write_record(issue, updated, comment_id)
-        try:
-            self.project(issue, target)
-        except Exception as exc:
-            raise OrchestratorError(f"state comment was updated, but projection failed: {exc}") from exc
+        self.project_or_report(issue, target)
         return updated
 
 
@@ -335,9 +354,12 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     state_parser = subparsers.add_parser("state", help="print the canonical task state")
     state_parser.add_argument("issue", type=issue_number)
-    init_parser = subparsers.add_parser("init", help="seed a state record for an existing issue")
+    init_parser = subparsers.add_parser("init", help="seed a record for an issue without one (backlog/todo; other states need --agent human)")
     init_parser.add_argument("issue", type=issue_number)
     init_parser.add_argument("--state", default="todo", choices=sorted(STATE_TABLE))
+    init_parser.add_argument("--agent", required=True, help="seeding actor; later states require human")
+    reconcile_parser = subparsers.add_parser("reconcile", help="re-project the canonical state to label and board")
+    reconcile_parser.add_argument("issue", type=issue_number)
     transition_parser = subparsers.add_parser("transition", help="validate and record a state transition")
     transition_parser.add_argument("issue", type=issue_number)
     transition_parser.add_argument("to", choices=sorted(STATE_TABLE))
@@ -354,7 +376,9 @@ def main(argv: list[str] | None = None, runner: Callable[[list[str]], str] = _su
         if args.command == "state":
             record, _ = orchestrator.get_record(args.issue)
         elif args.command == "init":
-            record = orchestrator.init(args.issue, args.state)
+            record = orchestrator.init(args.issue, args.state, args.agent)
+        elif args.command == "reconcile":
+            record = orchestrator.reconcile(args.issue)
         else:
             record = orchestrator.transition(args.issue, args.to, args.agent, args.head_sha, args.dry_run)
         print(json.dumps(record, indent=2, sort_keys=True))
