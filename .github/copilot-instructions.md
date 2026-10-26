@@ -189,8 +189,10 @@ elapsed time (end minus start, as minutes and seconds) from the user's input unt
 Sub-agents report their own durations to the main agent when asked; the total is always computed by the main agent.
 
 Right after the merge (and before the final report) the main agent also records the elapsed time on the task issue and the PR:
-`.github/scripts/post_task_elapsed.sh <issue> <pr> <start-epoch>`. It upserts one `<!-- task-elapsed -->` comment on each, so a re-run
-(e.g. after a follow-up merge for the same task) updates the existing comment instead of adding a new one. For an epic, run it
+`.github/scripts/post_task_elapsed.sh <issue> <pr> <start-epoch>`. It upserts an "Elapsed time" block at the top of the issue and PR
+descriptions (between `<!-- task-elapsed:begin -->` and `<!-- task-elapsed:end -->`, the rest of the description is kept) and one
+`<!-- task-elapsed -->` comment on each, so a re-run (e.g. after a follow-up merge for the same task) replaces both instead of adding new ones.
+Never edit or remove the block by hand. For an epic, run it
 for every sub-issue/PR pair and once more for the epic issue with the last PR and the epic's start time.
 
 
