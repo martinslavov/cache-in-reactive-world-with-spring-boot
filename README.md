@@ -241,6 +241,10 @@ before implementation. Architect skips only docs-only changes (per the QA defini
 listed risk areas, configuration, dependencies, architecture or cache topology; every skip has an issue comment with
 `<!-- architect-skipped -->` and `skipped: <reason>`.
 
+### Workflow orchestrator
+
+Inspect or seed an issue state with `python3 .github/scripts/orchestrator.py state <issue>` or `python3 .github/scripts/orchestrator.py init <issue> --agent <id> [--state <state>]` (only when the issue has no record yet; `init` seeds only `backlog` or `todo` for any agent, including `human`, and refuses any other `--state` before any GitHub call; later states are reached only through `transition`, which enforces the owner and edge table). If a transition reports that projection failed, run `python3 .github/scripts/orchestrator.py reconcile <issue>`: it idempotently re-projects the canonical state to the single `state:*` label and the board Status without changing the record. Every workflow stage change goes through `python3 .github/scripts/orchestrator.py transition <issue> <to> --agent <id>` (add `--head-sha <sha>` for the current PR head or `--dry-run` to validate without writing); each agent uses its own id, and human-only transitions use `--agent human`. Rollout starts in report mode: report an orchestrator failure and do not bypass it silently. Migrating in-flight tasks to later states is out of scope for #101; it is a separate, human-performed rollout step to be designed later (for example, the remaining EPIC #107 work can add a verified migration).
+
 The PR Review Agent independently reads the issue, the complete diff and surrounding code, then posts findings using severity
 `blocker`, `major`, `minor` or `nit`, including file and line where known. Blocker/major findings fail `PR Review` and return the
 PR to the engineer; minor/nit findings are reported but do not block QA. QA starts only after `PR Review` is `success` on the
@@ -283,17 +287,20 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
 | `TASK-NAME:<name>` | Issue created in `TODO` (default) and the full flow runs immediately |
 | `LABEL:BACKLOG,TASK-NAME:<name>` | Issue created with the `backlog` label in `Backlog`; nothing else runs |
 
-To start a backlog task, move its board item to `TODO`. A board move cannot wake up the local Copilot session, so TODO items
-are picked up oldest first after every merged task, or when you ask (for example `RUN-QUEUE`). Work moves the item to
-`In Progress`, and the merge moves it to `Done`.
+To start a backlog task without a state record, first seed it with `orchestrator.py init <issue> --state backlog --agent human`,
+then use `orchestrator.py transition <issue> todo --agent human`; it updates the board and removes the legacy `backlog` label.
+A board change cannot wake up the local Copilot session, so TODO items are picked up oldest first
+after every merged task, or when you ask (for example `RUN-QUEUE`). Agents change stages only through the orchestrator;
+its board projection moves active implementation/review work to `In Progress` and merge to `Done`.
 
 EPICs (label `epic`) group related sub-issues; they stay `In Progress`, are never processed from the queue themselves and are
 closed when all their sub-issues are done. The roadmap (five levels, the Level 1 Workflow Orchestrator and the features
 deferred because of the GitHub Free / Copilot Free plan) is in [`.github/docs/roadmap.md`](.github/docs/roadmap.md).
 
 ```bash
-.github/scripts/task_queue.sh list                    # open TODO issues, oldest first
-.github/scripts/task_queue.sh move 96 "In Progress"   # set an issue's board Status
+.github/scripts/task_queue.sh list                         # open TODO issues, oldest first
+python3 .github/scripts/orchestrator.py init 96 --state todo --agent human # seed an existing issue without a record
+python3 .github/scripts/orchestrator.py transition 96 architecture --agent architect-agent
 ```
 
 ### Running agents without approval prompts

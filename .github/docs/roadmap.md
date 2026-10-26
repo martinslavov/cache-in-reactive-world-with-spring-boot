@@ -57,12 +57,16 @@ or durable state across many runs is needed.
 
 | Sub-issue | Scope |
 |-----------|-------|
-| #101 | Task state machine and state record (foundation) |
+| #101 | Task state machine and state record (foundation) — In progress |
 | #102 | Task locks: a single active agent per task |
 | #103 | Idempotent action ledger |
 | #104 | Freshness gate: reject stale results and stale branches |
 | #105 | Merge Gate: one required check that authorizes merge |
 | #106 | Unified retry policy |
+
+Migrating in-flight tasks to later states is out of scope for #101: its `init` seeds only `backlog` or `todo`, and later
+states are reached only through validated transitions. A verified migration is a separate, human-performed rollout step
+to be designed later (for example, as part of the remaining EPIC #107 work).
 
 ## Deferred features (plan limitations)
 

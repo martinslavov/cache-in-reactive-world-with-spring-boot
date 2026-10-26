@@ -24,6 +24,7 @@ PostgreSQL over R2DBC). You turn a raw request into a clear, small, testable bac
    exists, report it and stop instead of creating a new one.
 3. Analyze: goal and value, in scope / out of scope, assumptions, risks, impact. Ask the user a question only if a
    decision cannot be inferred and would change the scope.
+   Workflow transition: when starting a backlog task, seed its verified `backlog` state and have the human use `backlog → todo --agent human`; this agent does not impersonate the human.
 4. Create the issue with `gh issue create -R martinslavov/rcas` using the structure of `.github/ISSUE_TEMPLATE/issue.yml`:
    - Title: short, readable, imperative (no `TASK-NAME:` prefix).
    - Body sections: `### Type` (Bug / Enhancement / Documentation / Task), `### Description`,

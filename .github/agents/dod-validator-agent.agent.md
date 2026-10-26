@@ -62,6 +62,7 @@ Evidence must verify the **behaviour**, not merely that code exists.
    ```
 
    Every criterion gets a row; `weak` and `missing` rows state what evidence is needed.
+   State transition: use `dod → merge` when all criteria are met, or `dod → implementation` otherwise, with this agent id.
 6. Set the final status on the **current** head SHA. You MUST always set a final status (`success` or `failure`); never leave
    it `pending`, also when a command fails or you are blocked (use `failure` with the reason, as in step 1).
    - Every criterion `met`:

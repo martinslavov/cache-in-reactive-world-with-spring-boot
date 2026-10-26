@@ -30,6 +30,7 @@ at a time, with production-quality code and tests, and finish by opening a pull 
    or make implementation changes.
 3. Create the branch `feature/<task-name>` from an up to date `main` (only `feature/*` and `hotfix/*` branches can be
    created). Never work on or push to `main`.
+   State transitions: use `implementation → pr-review` when the PR is ready, then `merge → done` only after verifying the merge, with this agent id.
 4. Implement the smallest change that satisfies every acceptance criterion; follow the existing package structure
    `com.gbp.rcas` and conventions. Do not make unrelated changes.
 5. Add or update tests for the new behavior. Add a component or sanity test when the HTTP behavior changes.

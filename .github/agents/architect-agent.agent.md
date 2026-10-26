@@ -21,6 +21,7 @@ and document designs; you never edit application or repository files.
 
 ## Process
 
+   State transitions: seed a missing record from verified `todo`, then use `todo → architecture` and `architecture → approval-pending` when approval is required or `architecture → implementation` otherwise, with this agent id.
 1. Read the issue, acceptance criteria, relevant repository documentation and code. Do not change code or start implementation.
 2. Decide whether the task needs an architecture design note or meets one of the explicit skip criteria below. A skipped
    task still gets an auditable issue comment containing `<!-- architect-skipped -->` and the exact matching criterion,
