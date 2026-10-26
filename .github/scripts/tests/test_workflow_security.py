@@ -34,7 +34,7 @@ class WorkflowSecurityTest(unittest.TestCase):
         for path in WORKFLOWS:
             for line in path.read_text(encoding="utf-8").splitlines():
                 match = re.match(r"\s*(?:- )?uses:\s*(.+)$", line)
-                if match:
+                if match and not match.group(1).startswith("./.github/workflows/"):
                     with self.subTest(workflow=path.name, uses=match.group(1)):
                         self.assertRegex(match.group(1), PINNED)
 
@@ -75,6 +75,37 @@ class WorkflowSecurityTest(unittest.TestCase):
         self.assertIn("package-ecosystem: github-actions", text)
         self.assertRegex(text, r"directory: /\s")
         self.assertIn("interval: weekly", text)
+
+    def test_release_tagging_is_limited_to_merged_main_prs_and_fork_fallback(self):
+        text = (ROOT / "workflows" / "ci-tag.yml").read_text(encoding="utf-8")
+        self.assertIn("pull_request:", text)
+        self.assertIn("types: [closed]", text)
+        self.assertIn("github.event.pull_request.merged == true", text)
+        self.assertIn("github.event.pull_request.base.ref == 'main'", text)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)
+        self.assertIn("github.event_name == 'push'", text)
+        self.assertIn(".head.repo.full_name != $repo", text)
+        self.assertIn("pull-requests: read", text)
+        self.assertIn("contents: write", text)
+        self.assertIn("github.event.pull_request.merge_commit_sha || github.sha", text)
+        self.assertIn("git/tags/$object_sha", text)
+        self.assertIn("release_tag.py existing --sha", text)
+        self.assertIn("uses: ./.github/workflows/ci-release.yml", text)
+        self.assertIn("group: release-tag-${{ github.event.pull_request.merge_commit_sha || github.sha }}", text)
+        self.assertIn("cancel-in-progress: false", text)
+        self.assertIn("for attempt in $(seq 1 10)", text)
+
+    def test_release_builds_tag_and_prunes_with_job_scoped_write_permissions(self):
+        text = (ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8")
+        self.assertIn('tags:\n      - "v**"', text)
+        self.assertIn("workflow_call:", text)
+        self.assertIn("required: true", text)
+        self.assertIn("contents: write", text)
+        self.assertIn("ref: refs/tags/${{ inputs.tag || github.ref_name }}", text)
+        self.assertIn("./gradlew build", text)
+        self.assertIn("build/libs/*.jar", text)
+        self.assertIn("gh release delete", text)
+        self.assertIn("--cleanup-tag", text)
 
 
 if __name__ == "__main__":

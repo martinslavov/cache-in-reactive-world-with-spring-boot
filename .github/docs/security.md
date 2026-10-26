@@ -19,7 +19,15 @@ Every workflow sets `permissions: {}` at the top level; each job declares only t
 | `ci-pr-issue-tracking.yml` | `create-issue` | `contents: read`, `issues: write`, `pull-requests: write` | `PROJECT_TOKEN` (board step only) |
 | `ci-pr-issue-close.yml` | `close-issue` | `contents: read`, `issues: write`, `pull-requests: read` | `PROJECT_TOKEN` (board step only) |
 | `ci-issue-board.yml` | `add-to-board` | none (`permissions: {}`) | `PROJECT_TOKEN` |
-| `ci-release.yml` | `release` | `contents: write` | none (job token creates the release) |
+| `ci-tag.yml` | `tag` | `contents: write`, `pull-requests: read` | `GITHUB_TOKEN` (create tag) |
+| `ci-release.yml` | `release`, `prune` | `contents: write` | `GITHUB_TOKEN` (create release and delete old releases/tags) |
+
+`ci-tag.yml` writes a tag only for a merged PR targeting `main`; the push fallback verifies that the commit is associated
+with a merged PR from a fork. It does not execute PR code. Concurrency is scoped per merge commit so GitHub does not
+replace pending runs for distinct PRs; the ref creation retries against the latest tags to handle simultaneous version
+allocation. The reusable release workflow checks out the selected tag, builds/tests it, creates the release with the
+jar, and prunes only strict stable `vX.Y.Z` tags/releases. The tag job dereferences annotated Git tags before checking
+whether the merge commit already has a tag.
 
 Checkout steps use `persist-credentials: false`, so the job token is not left in `.git/config` while build and test
 code runs. `pull_request_target` and `workflow_run` are not used; do not add them without a separate security review,
