@@ -133,8 +133,10 @@ class AgentDashboardTests(unittest.TestCase):
                          [line.strip() for line in on_block if line.startswith("  ") and not line.startswith("   ")])
         self.assertIn("    branches: [main]", on_block)
         self.assertNotIn("pull_request", dashboard)
+        self.assertIn("permissions: {}", dashboard.splitlines())
+        job_permissions = dashboard.split("    permissions:\n", 1)[1].splitlines()[:3]
         self.assertEqual(["contents: read", "pull-requests: read", "issues: write"],
-                         [line.strip() for line in top_level_block(dashboard, "permissions")])
+                         [line.strip() for line in job_permissions])
         self.assertTrue(any("cancel-in-progress: false" in line for line in top_level_block(dashboard, "concurrency")))
         self.assertIn("if: github.ref == 'refs/heads/main'", dashboard)
         self.assertIn("agent-dashboard", board)

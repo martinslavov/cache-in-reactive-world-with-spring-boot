@@ -91,7 +91,7 @@ Fix the critical risks before adding new agents (EPIC #119).
 | 2.1 | Bind every gate result to a commit SHA (`reviewed_sha` / `tested_sha`, compare-and-set before `success`) | #115 | Free |
 | 2.2 | Idempotent automations: stable run key `repo#issue:stage:sha`, upsert, re-run audit | #116 | Free |
 | 2.3 | Separate agent attestations from real CI: CI checks bound to GitHub Actions, no self-attestation | #117 | Free |
-| 2.4 | Least privilege: job-level permissions, SHA-pinned actions, Dependabot, token scopes, fork PRs | #118 | Free |
+| 2.4 | Least privilege: job-level permissions, SHA-pinned actions, Dependabot, token scopes, fork PRs (see [security.md](security.md)) | #118 | Free |
 | 2.3 / 2.4 | Agent statuses only from a trusted workflow, separate identity per agent | #114 | `requires-pro` |
 
 Overlaps with EPIC #107: #104 keeps the pending reset on push and the branch-behind-main check, #105 enforces 2.1 and 2.3
