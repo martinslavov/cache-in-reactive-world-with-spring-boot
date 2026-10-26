@@ -9,8 +9,8 @@ Every workflow sets `permissions: {}` at the top level; each job declares only t
 | Workflow | Job | Job permissions | Secrets used |
 |----------|-----|-----------------|--------------|
 | `ci-unit-tests.yml` | `unit-tests` | `contents: read` | none |
-| `ci-component-tests.yml` | `component-tests` | `contents: read` | `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (login step only) |
-| `ci-sanity-tests.yml` | `sanity-tests` | `contents: read` | `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (login step only) |
+| `ci-component-tests.yml` | `component-tests` | `contents: read` | `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (login step only, before checkout) |
+| `ci-sanity-tests.yml` | `sanity-tests` | `contents: read` | `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (login step only, before checkout) |
 | `ci-static-review.yml` | `static-review` | `contents: read` | none |
 | `ci-secret-scan.yml` | `secret-scan` | `contents: read` | none |
 | `ci-dependency-review.yml` | `dependency-review` | `contents: read` | none |
@@ -24,6 +24,24 @@ Every workflow sets `permissions: {}` at the top level; each job declares only t
 Checkout steps use `persist-credentials: false`, so the job token is not left in `.git/config` while build and test
 code runs. `pull_request_target` and `workflow_run` are not used; do not add them without a separate security review,
 because they run with secrets and a write token.
+
+### Docker registry credential boundary
+
+`docker/login-action` stores the registry credential in the runner Docker config (`~/.docker/config.json`), where
+any later step could read it; `persist-credentials: false` does not affect it. Component and sanity tests therefore
+keep the credential away from PR-controlled code:
+
+1. Log in to `dhi.io` (only when the secrets are available).
+2. Pull the fixed image list in `DHI_IMAGES`, defined in the workflow file itself (not read from the Dockerfile or
+   any other PR file); keep it in sync with the Dockerfile `FROM` lines (enforced by `test_workflow_security.py`).
+3. `docker logout dhi.io` (`if: always()`), then fail the job if `dhi.io` is still listed under `auths` or
+   `credHelpers` in the Docker config.
+4. Only then check out the repository and run `make build`, `make up` and the tests. `make up` builds the image
+   without `--pull` and the compose `build:` has no `pull: true`, so the cached base image is reused without registry
+   auth. PostgreSQL and Redis are public Docker Hub images pulled anonymously.
+
+No PR-controlled code (make, gradle, scripts, compose) runs while the credential is stored. The workflow file itself is
+still part of a same-repository PR, so changes to these steps need review like any other secret-handling change.
 
 ## SHA pinning and Dependabot
 
@@ -39,8 +57,8 @@ because they run with secrets and a write token.
 Workflows triggered by `pull_request` from a fork get a read-only token and no repository secrets.
 
 - Nothing runs PR code with secrets or a write token (no `pull_request_target` / `workflow_run`).
-- Component and sanity tests check whether the Docker Hub secrets exist and skip only the `docker/login-action`
-  step when they do not; the build, `make up` and the tests still run (a missing login is never a reason to skip
+- Component and sanity tests check whether the Docker Hub secrets exist and skip only the login and base-image
+  pull steps when they do not; the build, `make up` and the tests still run (a missing login is never a reason to skip
   tests). Hardened-image (`dhi.io`) pulls may fail without credentials; the job then fails visibly instead of passing.
 - Dependabot PRs get Dependabot secrets, not Actions secrets; the same rule applies.
 - PR Issue Tracking cannot create issues for fork PRs (read-only token).
