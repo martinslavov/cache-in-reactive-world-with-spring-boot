@@ -103,6 +103,35 @@ class WorkflowSecurityTest(unittest.TestCase):
         self.assertNotIn("merge_commit_sha ||", text.split("jobs:")[0])
         self.assertIn("for attempt in $(seq 1 10)", text)
 
+    def test_reusable_release_declares_every_secret_passed_by_tag_workflow(self):
+        caller = _jobs((ROOT / "workflows" / "ci-tag.yml").read_text(encoding="utf-8"))["release"]
+        called = (ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8")
+        forwarded_secrets = re.findall(
+            r"(?m)^      ([A-Z][A-Z0-9_]*): \$\{\{ secrets\.([A-Z][A-Z0-9_]*) }}$", caller
+        )
+        workflow_call = re.search(
+            r"(?ms)^  workflow_call:\n(?P<section>.*?)(?=^  workflow_dispatch:)", called
+        )
+        self.assertIsNotNone(workflow_call)
+        declared_secrets = re.search(
+            r"(?ms)^    secrets:\n(?P<section>(?:^      [A-Z][A-Z0-9_]*:\n        required: (?:true|false)\n)+)",
+            workflow_call.group("section"),
+        )
+        self.assertIsNotNone(declared_secrets)
+        declarations = {
+            name: required == "true"
+            for name, required in re.findall(
+                r"(?m)^      ([A-Z][A-Z0-9_]*):\n        required: (true|false)$",
+                declared_secrets.group("section"),
+            )
+        }
+        self.assertTrue(forwarded_secrets)
+        for caller_name, secret_name in forwarded_secrets:
+            with self.subTest(secret=secret_name):
+                self.assertEqual(caller_name, secret_name)
+                self.assertIn(secret_name, declarations)
+                self.assertTrue(declarations[secret_name])
+
     def test_release_builds_tag_and_prunes_with_job_scoped_write_permissions(self):
         text = (ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8")
         jobs = _jobs(text)
