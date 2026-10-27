@@ -108,6 +108,13 @@ class WorkflowJqFilterExtractionTest(unittest.TestCase):
                 missing = sorted(set(filters) - set(CASES))
                 self.assertEqual(missing, [], f"{name}: add representative payloads to CASES for {missing}")
 
+    def test_dockerhub_latest_reuses_the_case_covered_stable_release_filter(self):
+        filters = workflow_filters()["ci-release.yml"]
+        stable_filter = ".[] | select(.draft == false and .prerelease == false) | .tag_name"
+        self.assertGreaterEqual(filters.count(stable_filter), 2)
+        self.assertIn(stable_filter, CASES)
+        self.assertTrue(CASES[stable_filter], "stable-release payloads must cover Docker Hub latest selection")
+
     def test_tag_workflow_uses_fixed_matching_refs_filter_in_both_jobs(self):
         filters = workflow_filters()["ci-tag.yml"]
 

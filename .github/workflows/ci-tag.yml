@@ -2,7 +2,7 @@
 # A push fallback handles fork PRs, whose pull_request token cannot create tags.
 # Bump from the merged PR labels: major -> major, enhancement -> minor, otherwise patch; first tag is v0.1.0.
 # Re-running for an already tagged commit creates no new tag.
-# CI Release updates latest to the highest stable SemVer and prunes images with releases after verifying deletion.
+# CI Release publishes GHCR and Docker Hub images, advances both latest aliases and prunes old images/releases.
 # Privilege separation: the read-only plan job may check out and run the repository helper; the contents:write tag job
 # never checks out the repository or runs repository scripts, and re-validates every value it receives from plan.
 name: CI Tag
@@ -205,3 +205,4 @@ jobs:
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      DOCKERHUB_PUSH_TOKEN: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
