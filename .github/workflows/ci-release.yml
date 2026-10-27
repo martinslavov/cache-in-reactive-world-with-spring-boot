@@ -303,11 +303,13 @@ jobs:
           REPO: ${{ github.repository }}
           TAG: ${{ needs.resolve.outputs.tag }}
           IMAGE: ghcr.io/${{ github.repository }}:${{ needs.resolve.outputs.tag }}
-          HUB_IMAGE: docker.io/${{ github.repository_owner }}/rcas:${{ needs.resolve.outputs.tag }}
-          HUB_URL: https://hub.docker.com/r/${{ github.repository_owner }}/rcas
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DIGEST: ${{ needs.publish.outputs.digest }}
         run: |
           set -euo pipefail
+          [ -n "$DOCKERHUB_USERNAME" ] || { echo "::error::DOCKERHUB_USERNAME is required to reference the Docker Hub image" >&2; exit 1; }
+          HUB_IMAGE="docker.io/$DOCKERHUB_USERNAME/rcas:$TAG"
+          HUB_URL="https://hub.docker.com/r/$DOCKERHUB_USERNAME/rcas"
           notes="$RUNNER_TEMP/release-notes.md"
           if release=$(gh api "repos/$REPO/releases/tags/$TAG" 2>"$RUNNER_TEMP/release-error"); then
             release_id=$(jq -r '.id' <<< "$release")

@@ -413,8 +413,7 @@ class WorkflowMock:
             "REPO": "test/repo",
             "TAG": "v0.1.0",
             "IMAGE": "ghcr.io/test/repo:v0.1.0",
-            "HUB_IMAGE": "docker.io/test/rcas:v0.1.0",
-            "HUB_URL": "https://hub.docker.com/r/test/rcas",
+            "DOCKERHUB_USERNAME": "test",
             "DIGEST": "sha256:" + "a" * 64,
             "KEEP_RELEASES": "2",
         } | env
@@ -461,6 +460,25 @@ class ReleaseStepBehaviorTest(unittest.TestCase):
         self.assertIn("https://hub.docker.com/r/test/rcas", release["body"])
         self.assertIn("sha256:" + "a" * 64, release["body"])
         self.assertEqual(release["assets"], ["build/libs/rcas-0.0.1.jar"])
+
+    def test_release_notes_use_docker_hub_username_namespace_not_github_owner(self):
+        for existing in ({}, {"v0.1.0": {"id": 7, "body": "Notes", "assets": ["original.jar"]}}):
+            with self.subTest(existing=bool(existing)):
+                gh = WorkflowMock(self, releases=existing)
+                result = gh.run(self.script, DOCKERHUB_USERNAME="hubuser")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                body = gh.state()["releases"]["v0.1.0"]["body"]
+                self.assertIn("docker pull docker.io/hubuser/rcas:v0.1.0", body)
+                self.assertIn("https://hub.docker.com/r/hubuser/rcas", body)
+                self.assertNotIn("docker.io/test/", body)
+                self.assertNotIn("hub.docker.com/r/test/", body)
+
+    def test_release_notes_require_docker_hub_username(self):
+        gh = WorkflowMock(self)
+        result = gh.run(self.script, DOCKERHUB_USERNAME="")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("DOCKERHUB_USERNAME", result.stderr)
+        self.assertEqual(gh.state()["releases"], {})
 
     def test_existing_release_notes_are_updated_idempotently_without_changing_assets(self):
         original = {"id": 7, "body": "Original release notes\n\n<!-- rcas-image-reference -->\n\nContainer image: legacy", "assets": ["original.jar"]}
