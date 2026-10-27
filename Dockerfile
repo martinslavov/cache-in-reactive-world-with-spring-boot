@@ -2,6 +2,13 @@
 # Artifacts come from `make build`: the boot jar and the precompiled health check class (build/healthcheck).
 FROM dhi.io/eclipse-temurin:25
 
+ARG OCI_SOURCE=https://github.com/martinslavov/rcas
+ARG OCI_VERSION=development
+ARG OCI_REVISION=unknown
+LABEL org.opencontainers.image.source=${OCI_SOURCE} \
+      org.opencontainers.image.version=${OCI_VERSION} \
+      org.opencontainers.image.revision=${OCI_REVISION}
+
 USER nonroot
 WORKDIR /app
 

@@ -105,15 +105,70 @@ class WorkflowSecurityTest(unittest.TestCase):
 
     def test_release_builds_tag_and_prunes_with_job_scoped_write_permissions(self):
         text = (ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8")
-        self.assertIn('tags:\n      - "v**"', text)
+        jobs = _jobs(text)
+        self.assertIn('tags: ["v**"]', text)
         self.assertIn("workflow_call:", text)
+        self.assertIn("workflow_dispatch:", text)
         self.assertIn("required: true", text)
         self.assertIn("contents: write", text)
-        self.assertIn("ref: refs/tags/${{ inputs.tag || github.ref_name }}", text)
+        self.assertIn("ref: refs/tags/${{ needs.resolve.outputs.tag }}", text)
+        self.assertIn("ref: ${{ needs.resolve.outputs.commit }}", text)
+        self.assertIn("packages: write", text)
         self.assertIn("./gradlew build", text)
         self.assertIn("build/libs/*.jar", text)
-        self.assertIn('gh api -X DELETE "repos/$REPO/releases/$release_id"', text)
+        self.assertEqual(text.count("name: release-image-context"), 3)
+        self.assertIn("actions/upload-artifact@", jobs["build"])
+        self.assertIn("actions/download-artifact@", jobs["publish"])
+        self.assertIn("actions/download-artifact@", jobs["release"])
+        self.assertIn("gh release create", text)
+        self.assertIn("org.opencontainers.image.revision", text)
+        self.assertIn('--build-arg "OCI_REVISION=$COMMIT"', text)
         self.assertIn('gh api -X DELETE "repos/$REPO/git/refs/tags/$tag"', text)
+        self.assertIn('gh api -X DELETE "user/packages/container/rcas/versions/$id"', text)
+        self.assertIn("retaining all releases and tags", text)
+
+    def test_dockerfile_declares_oci_labels_and_workflow_inspects_each_label(self):
+        dockerfile = (ROOT.parent / "Dockerfile").read_text(encoding="utf-8")
+        jobs = _jobs((ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8"))
+        publish = jobs["publish"]
+        for label in ("source", "version", "revision"):
+            name = f"org.opencontainers.image.{label}"
+            with self.subTest(label=label):
+                self.assertIn(f"{name}=", dockerfile)
+                self.assertIn(f'"{name}"', publish)
+        self.assertIn("[ -f build/healthcheck/HealthCheck.class ]", publish)
+        self.assertIn("Expected exactly one boot jar", jobs["build"])
+
+    def test_release_jobs_follow_image_before_release_and_limit_registry_secrets(self):
+        text = (ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8")
+        jobs = _jobs(text)
+        self.assertIn("needs: [resolve, build]", jobs["publish"])
+        self.assertIn("needs: [resolve, build, publish]", jobs["release"])
+        self.assertIn("needs: [release]", jobs["latest"])
+        self.assertIn("needs: [latest]", jobs["prune"])
+        self.assertIn("packages: write", jobs["publish"])
+        self.assertNotIn("contents: write", jobs["publish"])
+        self.assertIn("contents: write", jobs["release"])
+        self.assertNotIn("packages: write", jobs["release"])
+        self.assertIn("packages: write", jobs["latest"])
+        self.assertIn("packages: write", jobs["prune"])
+        self.assertIn("secrets.DOCKERHUB_USERNAME", jobs["publish"])
+        self.assertNotIn("secrets.DOCKERHUB_USERNAME", text.split("  release:\n", 1)[1])
+        self.assertIn("docker logout ghcr.io", jobs["publish"])
+        self.assertIn("docker logout dhi.io", jobs["publish"])
+        self.assertIn("if: always()", jobs["publish"])
+        self.assertIn("Verify no registry credentials remain", jobs["publish"])
+        self.assertIn("docker logout ghcr.io", jobs["latest"])
+        self.assertIn("Verify no GHCR credentials remain", jobs["latest"])
+        self.assertIn("workflow_dispatch", text.split("jobs:", 1)[0])
+        self.assertIn("strict stable vX.Y.Z", jobs["resolve"])
+
+    def test_release_and_tag_headers_describe_image_publishing_and_pruning(self):
+        for name in ("ci-release.yml", "ci-tag.yml"):
+            header = (ROOT / "workflows" / name).read_text(encoding="utf-8").split("name:", 1)[0]
+            with self.subTest(workflow=name):
+                self.assertIn("image", header.lower())
+                self.assertIn("prun", header.lower())
 
     def test_prune_job_does_not_execute_repository_code_with_write_token(self):
         text = (ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8")
@@ -126,13 +181,13 @@ class WorkflowSecurityTest(unittest.TestCase):
     def test_prune_lists_releases_once_and_does_not_treat_release_view_errors_as_absence(self):
         text = (ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8")
         prune = _jobs(text)["prune"]
-        self.assertEqual(prune.count('gh api "repos/$REPO/releases" --paginate'), 1)
+        self.assertEqual(prune.count('gh api --paginate "repos/$REPO/releases?per_page=100"'), 1)
         self.assertNotIn("gh release view", prune)
         self.assertIn("set -euo pipefail", prune)
         self.assertIn("awk -F '\\t' -v tag=\"$tag\"", prune)
 
     def test_mutating_release_jobs_share_one_global_job_level_queue(self):
-        critical = {"ci-tag.yml": ("tag",), "ci-release.yml": ("release", "prune")}
+        critical = {"ci-tag.yml": ("tag",), "ci-release.yml": ("publish", "release", "latest", "prune")}
         for workflow, job_names in critical.items():
             text = (ROOT / "workflows" / workflow).read_text(encoding="utf-8")
             with self.subTest(workflow=workflow):

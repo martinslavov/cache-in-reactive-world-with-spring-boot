@@ -21,18 +21,29 @@ Every workflow sets `permissions: {}` at the top level; each job declares only t
 | `ci-issue-board.yml` | `add-to-board` | none (`permissions: {}`) | `PROJECT_TOKEN` |
 | `ci-tag.yml` | `plan` | `contents: read`, `pull-requests: read` | `GITHUB_TOKEN` (read-only; checks out and runs the release helper) |
 | `ci-tag.yml` | `tag` | `contents: write` | `GITHUB_TOKEN` (create tag; no checkout, runs no repository code) |
-| `ci-release.yml` | `release`, `prune` | `contents: write` | `GITHUB_TOKEN` (create release and delete old releases/tags) |
+| `ci-release.yml` | `resolve`, `build` | `contents: read` | `GITHUB_TOKEN` (validate tag and fetch source) |
+| `ci-release.yml` | `publish` | `contents: read`, `packages: write` | `GITHUB_TOKEN`, `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (registry logins in publish steps only) |
+| `ci-release.yml` | `release` | `contents: write` | `GITHUB_TOKEN` (create/update notes and attach jar only for a new release) |
+| `ci-release.yml` | `latest` | `contents: read`, `packages: write` | `GITHUB_TOKEN` (alias the highest stable image) |
+| `ci-release.yml` | `prune` | `contents: write`, `packages: write` | `GITHUB_TOKEN` (delete stale package versions before releases/tags) |
 
 `ci-tag.yml` writes a tag only for a merged PR targeting `main`; the push fallback verifies that the commit is associated
-with a merged PR from a fork. It does not execute PR code. Privilege is separated: the read-only `plan` job looks up the PR and calculates the tag with the checked-out helper, while the `contents: write` `tag` job does not check out the repository or run repository scripts. It treats the plan outputs as untrusted: the tag must match strict stable SemVer `^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`, the bump must be `major`, `minor` or `patch`, and the commit (taken from the event context, never from a job output) must be a 40-hex SHA that exists in the repository. It recomputes the version from the live tags on each attempt, so a plan that raced or went stale cannot allocate a wrong or duplicate version, and returns the existing tag when the commit is already tagged. The mutating jobs (`ci-tag.yml` `tag`, `ci-release.yml` `release` and `prune`) use one job-level concurrency group
-`release-tag` with `queue: max` and no cancellation, so automatic and manual tag-push releases are serialized in FIFO
-order and pending jobs are not replaced; there is no workflow-level group, so the reusable call cannot block its caller; the ref creation retries against the latest tags to handle simultaneous version
-allocation. The reusable release workflow checks out the selected tag, builds/tests it, creates the release with the
-jar, and prunes only strict stable `vX.Y.Z` tags/releases. The write-enabled prune job has no checkout and runs no
-repository helper or Python; it sorts matching tags numerically inline. Before deleting anything, it lists releases once
-through the GitHub API and fails closed if that list cannot be fetched. A listed release is deleted by ID before its tag
-ref; a tag with no listed release is deleted as an orphan. The tag job dereferences annotated Git tags before checking
-whether the merge commit already has a tag.
+with a merged PR from a fork. It does not execute PR code. Privilege is separated: the read-only `plan` job looks up the PR and calculates the tag with the checked-out helper, while the `contents: write` `tag` job does not check out the repository or run repository scripts. It treats the plan outputs as untrusted: the tag must match strict stable SemVer `^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`, the bump must be `major`, `minor` or `patch`, and the commit (taken from the event context, never from a job output) must be a 40-hex SHA that exists in the repository. It recomputes the version from the live tags on each attempt, so a plan that raced or went stale cannot allocate a wrong or duplicate version, and returns the existing tag when the commit is already tagged. The mutating jobs (`ci-tag.yml` `tag`, and `ci-release.yml` `publish`, `release`, `latest` and `prune`) use the
+job-level `release-tag` concurrency group with `queue: max` and no cancellation. This keeps tag pushes, image/release
+updates, latest alias movement and cleanup serialized without a workflow-level group that could block a reusable call.
+CI Release accepts only an existing strict stable `vX.Y.Z` tag (including `workflow_dispatch` backfills), resolves it to
+a commit, builds/tests at that immutable commit, and passes only the same-run jar and health-check class to its image job.
+The `publish` job alone receives Docker Hub secrets; it logs out of `dhi.io` and `ghcr.io` on every exit and verifies
+credentials are absent. It reuses an existing image only after checking its OCI revision matches the tag commit. Release
+notes are updated idempotently with the image reference/digest and existing jar assets are not replaced. The separate
+`latest` job selects the numerically greatest stable release and retags that exact manifest.
+
+The `prune` job has no checkout and runs no repository helper or Python. It lists stable tags and package versions,
+protects retained versions and every shared/non-stale package tag, and deletes eligible image versions before deleting
+release/tag metadata. If the package API cannot be read or image deletion is denied (including plans that do not permit
+GITHUB_TOKEN version deletion), it fails visibly and keeps the release/tag; there is no PAT fallback. The owner must
+review package Actions access/deletion capability before relying on automatic image pruning. The tag job dereferences
+annotated Git tags before checking whether the merge commit already has a tag.
 
 Checkout steps use `persist-credentials: false`, so the job token is not left in `.git/config` while build and test
 code runs. `pull_request_target` and `workflow_run` are not used; do not add them without a separate security review,
@@ -40,21 +51,31 @@ because they run with secrets and a write token.
 
 ### Docker registry credential boundary
 
-`docker/login-action` stores the registry credential in the runner Docker config (`~/.docker/config.json`), where
-any later step could read it; `persist-credentials: false` does not affect it. Component and sanity tests therefore
-keep the credential away from PR-controlled code:
+`docker/login-action` stores registry credentials in the runner Docker config (`~/.docker/config.json`), where later
+steps could read them; `persist-credentials: false` does not affect this config.
 
-1. Log in to `dhi.io` (only when the secrets are available).
-2. Pull the fixed image list in `DHI_IMAGES`, defined in the workflow file itself (not read from the Dockerfile or
-   any other PR file); keep it in sync with the Dockerfile `FROM` lines (enforced by `test_workflow_security.py`).
-3. `docker logout dhi.io` (`if: always()`), then fail the job if `dhi.io` is still listed under `auths` or
-   `credHelpers` in the Docker config.
-4. Only then check out the repository and run `make build`, `make up` and the tests. `make up` builds the image
-   without `--pull` and the compose `build:` has no `pull: true`, so the cached base image is reused without registry
-   auth. PostgreSQL and Redis are public Docker Hub images pulled anonymously.
+Component and sanity tests keep Docker Hub credentials away from PR-controlled code:
 
-No PR-controlled code (make, gradle, scripts, compose) runs while the credential is stored. The workflow file itself is
-still part of a same-repository PR, so changes to these steps need review like any other secret-handling change.
+1. Log in to `dhi.io` only when the read-only Docker Hub secrets are available.
+2. Pull the fixed image list in `DHI_IMAGES`, defined in the workflow itself (not read from the Dockerfile or other PR
+   files); `test_workflow_security.py` keeps it aligned with Dockerfile `FROM` lines.
+3. Run `docker logout dhi.io` with `if: always()` and fail if `dhi.io` remains under `auths` or `credHelpers`.
+4. Only then check out repository code and run the build/tests. Compose reuses the already pulled base image without
+   `--pull`; PostgreSQL and Redis are pulled anonymously.
+
+For releases, the `publish` job checks out the selected validated tag with `persist-credentials: false` and downloads
+only this run's build artifact before either registry login. Docker Hub and GHCR credentials are scoped to this job;
+`dhi.io` and `ghcr.io` are logged out on all exits, then the config is checked for residual credentials. The separate
+`latest` publisher also logs out of GHCR and verifies cleanup. Neither release job checks out untrusted PR code; the
+image build uses only the validated release tag.
+The package must be linked to the repository for the `GITHUB_TOKEN` package API access to work. A user-owned GHCR package
+may start private; the owner must make it public once in package settings to allow anonymous pulls. Package-version
+deletion may not be enabled for user-owned packages on every plan. In that case pruning fails closed before deleting the
+corresponding release/tag and asks the owner to grant package-version deletion access; there is no PAT fallback.
+
+No PR-controlled code (make, Gradle, scripts or Compose) runs while component/sanity test credentials are stored. The
+workflow files are still part of same-repository PRs, so changes to these secret-handling steps require review like any
+other security-sensitive changes.
 
 ## SHA pinning and Dependabot
 
@@ -81,8 +102,8 @@ Workflows triggered by `pull_request` from a fork get a read-only token and no r
 | Secret | Used by | Minimum scope |
 |--------|---------|---------------|
 | `PROJECT_TOKEN` | `ci-issue-board.yml`, `ci-pr-issue-tracking.yml`, `ci-pr-issue-close.yml` (GraphQL: read the user project `RCAS Tracking`, add items, update the `Status` field) | Fine-grained personal access token owned by the project owner, **user permission "Projects": read and write**; no repository permissions are needed because issue and PR access comes from the job `GITHUB_TOKEN`. Set a short expiry and rotate. |
-| `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` | `ci-component-tests.yml`, `ci-sanity-tests.yml` (login to `dhi.io` to pull hardened images) | Docker Hub access token with **read-only (public repo read)** permission. Never a password or a read/write token. |
-| `GITHUB_TOKEN` | all workflows | Per job, see the table above. |
+| `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` | `ci-component-tests.yml`, `ci-sanity-tests.yml` (base-image pull) and `ci-release.yml` `publish` (image build) | Docker Hub access token with **read-only (public repo read)** permission. Never a password or a read/write token. |
+| `GITHUB_TOKEN` | all workflows | Per job, see the table above. For GHCR, `packages: write` is limited to publication, `latest`, and prune jobs; no personal access token is used. |
 
 Secrets are exposed only to the step that needs them, never at workflow or job level.
 
