@@ -135,6 +135,11 @@ jobs:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           ISSUE_URL: ${{ steps.tracking.outputs.issue-url }}
         run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::PROJECT_TOKEN is unavailable; skipping the RCAS Tracking board step."
+            exit 0
+          fi
+
           project=$(gh api graphql -f query='query { user(login: "martinslavov") { projectV2(number: 1) { id field(name: "Status") { ... on ProjectV2SingleSelectField { id options { id name } } } } } }' --jq '.data.user.projectV2')
           project_id=$(jq -r '.id' <<< "$project")
           field_id=$(jq -r '.field.id' <<< "$project")

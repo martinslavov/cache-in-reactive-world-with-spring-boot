@@ -615,5 +615,36 @@ class PruneStepBehaviorTest(unittest.TestCase):
         self.assertFalse(any(call[0] in ("delete-release", "delete-tag") for call in state["calls"]))
 
 
+class ProjectBoardTokenBehaviorTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.script = _step("ci-pr-issue-tracking.yml", "Add tracking issue to RCAS Tracking board", job="create-issue")
+
+    def test_empty_token_warns_and_skips_gh(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gh = pathlib.Path(directory) / "gh"
+            gh.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+            gh.chmod(0o755)
+            result = subprocess.run(
+                ["/bin/bash", "-c", self.script],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=os.environ | {"PATH": directory, "GH_TOKEN": ""},
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("::warning::PROJECT_TOKEN is unavailable; skipping the RCAS Tracking board step.", result.stdout)
+
+    def test_nonempty_token_keeps_existing_board_operations(self):
+        for operation in (
+            "gh api graphql",
+            "addProjectV2ItemById",
+            "updateProjectV2ItemFieldValue",
+        ):
+            with self.subTest(operation=operation):
+                self.assertIn(operation, self.script)
+
+
 if __name__ == "__main__":
     unittest.main()
