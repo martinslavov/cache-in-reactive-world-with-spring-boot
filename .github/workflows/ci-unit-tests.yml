@@ -27,7 +27,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Run agent dashboard unit tests
+      - name: Run workflow script unit tests
         run: python3 -m unittest discover -s .github/scripts -t .github/scripts
 
       - name: Set up JDK 25

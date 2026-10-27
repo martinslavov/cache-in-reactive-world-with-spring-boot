@@ -62,7 +62,7 @@ jobs:
           fi
           labels=$(printf '%s' "$pull_requests" | jq -r '[.[].labels[].name] | join(",")')
           refs=$(gh api "repos/$REPO/git/matching-refs/tags/v" --paginate \
-            --jq '.[] | [.ref | sub("^refs/tags/"; ""), .object.type, .object.sha] | @tsv')
+            --jq '.[] | [(.ref | sub("^refs/tags/"; "")), .object.type, .object.sha] | @tsv')
           resolved_refs=""
           while IFS=$'\t' read -r tag object_type object_sha; do
             [ -n "$tag" ] || continue
@@ -145,7 +145,7 @@ jobs:
           fi
           for attempt in $(seq 1 10); do
             refs=$(gh api "repos/$REPO/git/matching-refs/tags/v" --paginate \
-              --jq '.[] | [.ref | sub("^refs/tags/"; ""), .object.type, .object.sha] | @tsv')
+              --jq '.[] | [(.ref | sub("^refs/tags/"; "")), .object.type, .object.sha] | @tsv')
             stable_tags=""
             tagged_here=""
             while IFS=$'\t' read -r tag object_type object_sha; do
