@@ -495,6 +495,40 @@ class ReleaseStepBehaviorTest(unittest.TestCase):
         self.assertNotIn("rcas-image-reference", release["body"])
         self.assertEqual(len([c for c in gh.state()["calls"] if c[0] == "patch-release"]), 2)
 
+    def test_rerunning_release_notes_yields_byte_identical_notes_with_section_on_top(self):
+        section = textwrap.dedent(f"""\
+            <!-- rcas-docker-image:start -->
+            ## Docker image
+
+            ```bash
+            docker pull ghcr.io/test/repo:v0.1.0
+            docker pull docker.io/test/rcas:v0.1.0
+            ```
+
+            Digest: `sha256:{"a" * 64}`
+
+            [GitHub Container Registry](https://github.com/test/repo/pkgs/container/rcas) · [Docker Hub](https://hub.docker.com/r/test/rcas)
+            <!-- rcas-docker-image:end -->""")
+        legacy = {"id": 7, "assets": ["original.jar"],
+                  "body": "Original release notes\n\n<!-- rcas-image-reference -->\n\nContainer image: legacy\n"}
+        cases = {
+            "existing release with legacy bottom block": ({"v0.1.0": legacy}, "Original release notes"),
+            "fresh release": ({}, "Generated release notes"),
+        }
+        for case, (releases, original_notes) in cases.items():
+            with self.subTest(case=case):
+                gh = WorkflowMock(self, releases=releases)
+                bodies = []
+                for _ in range(2):
+                    result = gh.run(self.script)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    bodies.append(gh.state()["releases"]["v0.1.0"]["body"])
+                self.assertEqual(bodies[0].encode("utf-8"), bodies[1].encode("utf-8"))
+                self.assertEqual(bodies[1], f"{section}\n\n{original_notes}\n")
+                self.assertEqual(bodies[1].count("## Docker image"), 1)
+                self.assertNotIn("rcas-image-reference", bodies[1])
+                self.assertNotIn("Container image: legacy", bodies[1])
+
 
 class PublishImageBehaviorTest(unittest.TestCase):
     @classmethod
@@ -613,6 +647,117 @@ class DockerHubImageBehaviorTest(unittest.TestCase):
         docker_calls = gh.state()["docker"]
         self.assertEqual(len(docker_calls), 1)
         self.assertNotIn("mock-secret", docker_calls[0])
+
+
+# Fake docker CLI that stores credentials in $DOCKER_CONFIG/config.json like `docker login`/`docker logout`;
+# docker.io is normalised to the index server key. DOCKER_LOGOUT_BROKEN simulates a logout that leaves credentials.
+MOCK_DOCKER_CONFIG = textwrap.dedent(
+    """\
+    #!/usr/bin/env python3
+    import json, os, pathlib, sys
+    config = pathlib.Path(os.environ["DOCKER_CONFIG"]) / "config.json"
+    data = json.loads(config.read_text(encoding="utf-8")) if config.exists() else {}
+    args = sys.argv[1:]
+    def key(registry): return "https://index.docker.io/v1/" if registry == "docker.io" else registry
+    if args[:1] == ["login"]:
+        sys.stdin.read()
+        data.setdefault("auths", {})[key(args[1])] = {"auth": "bW9jazptb2Nr"}
+    elif args[:1] == ["logout"]:
+        if not os.environ.get("DOCKER_LOGOUT_BROKEN"):
+            data.get("auths", {}).pop(key(args[1]), None)
+    else:
+        sys.exit("unexpected docker invocation: " + repr(args))
+    config.write_text(json.dumps(data), encoding="utf-8")
+    """
+)
+
+
+def _job_steps(job, prefix):
+    text = _jobs((ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8"))[job]
+    return [s for s in _steps(text) if s.startswith(f"name: {prefix}")]
+
+
+def _inline_run(step):
+    return next(line.split("run: ", 1)[1] for line in step.splitlines() if line.startswith("        run: "))
+
+
+class DockerHubCredentialCleanupBehaviorTest(unittest.TestCase):
+    JOBS = ("dockerhub", "dockerhub-latest")
+    RESIDUAL_KEYS = ("https://index.docker.io/v1/", "docker.io", "ghcr.io")
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.path = pathlib.Path(temp.name)
+        self.bin = self.path / "bin"
+        self.bin.mkdir()
+        docker = self.bin / "docker"
+        docker.write_text(MOCK_DOCKER_CONFIG, encoding="utf-8")
+        docker.chmod(0o755)
+
+    def config_dir(self, name, config=None):
+        directory = self.path / name
+        directory.mkdir()
+        if config is not None:
+            (directory / "config.json").write_text(json.dumps(config), encoding="utf-8")
+        return directory
+
+    def run_script(self, script, docker_config, **env):
+        environment = os.environ | {"PATH": f"{self.bin}:{os.environ['PATH']}", "DOCKER_CONFIG": str(docker_config),
+                                    "RUNNER_TEMP": str(self.path), "DOCKERHUB_USERNAME": "test",
+                                    "DOCKERHUB_PUSH_TOKEN": "mock-secret"} | env
+        return subprocess.run(["bash", "-c", script], check=False, capture_output=True, text=True, env=environment)
+
+    def residue_check(self, job):
+        return _run_script(_job_steps(job, "Verify no registry credentials remain")[0])
+
+    def auths(self, docker_config):
+        return json.loads((docker_config / "config.json").read_text(encoding="utf-8"))["auths"]
+
+    def login_and_logout(self, job, docker_config, **env):
+        login = _run_script(_job_steps(job, "Log in to Docker Hub")[0])
+        self.assertEqual(self.run_script(login, docker_config).returncode, 0)
+        self.assertIn("https://index.docker.io/v1/", self.auths(docker_config))
+        logouts = [_inline_run(step) for step in _job_steps(job, "Log out of")]
+        self.assertEqual(logouts, ["docker logout docker.io", "docker logout ghcr.io"])
+        for command in logouts:
+            self.assertEqual(self.run_script(command, docker_config, **env).returncode, 0)
+        return self.run_script(self.residue_check(job), docker_config)
+
+    def test_logout_steps_remove_docker_hub_and_ghcr_credentials_and_check_passes(self):
+        for job in self.JOBS:
+            with self.subTest(job=job):
+                docker_config = self.config_dir(job, {"auths": {"ghcr.io": {"auth": "Z2g6Z2g="},
+                                                                "registry.example": {"auth": "eDp4"}}})
+                result = self.login_and_logout(job, docker_config)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.auths(docker_config), {"registry.example": {"auth": "eDp4"}})
+
+    def test_check_fails_when_logout_leaves_credentials_behind(self):
+        for job in self.JOBS:
+            with self.subTest(job=job):
+                docker_config = self.config_dir(job, {"auths": {"ghcr.io": {"auth": "Z2g6Z2g="}}})
+                result = self.login_and_logout(job, docker_config, DOCKER_LOGOUT_BROKEN="1")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Registry credentials remain", result.stderr)
+
+    def test_check_fails_for_each_residual_docker_io_or_ghcr_credential(self):
+        for job in self.JOBS:
+            for section in ("auths", "credHelpers"):
+                for registry in self.RESIDUAL_KEYS:
+                    with self.subTest(job=job, section=section, registry=registry):
+                        name = f"{job}-{section}-{registry}".replace("/", "_").replace(":", "_")
+                        docker_config = self.config_dir(name, {section: {registry: {}}})
+                        result = self.run_script(self.residue_check(job), docker_config)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("Registry credentials remain", result.stderr)
+
+    def test_check_passes_without_config_or_with_only_unrelated_registries(self):
+        for job in self.JOBS:
+            for name, config in (("missing", None), ("unrelated", {"auths": {"registry.example": {}}})):
+                with self.subTest(job=job, config=name):
+                    result = self.run_script(self.residue_check(job), self.config_dir(f"{job}-{name}", config))
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 class ResolveTagBehaviorTest(unittest.TestCase):
