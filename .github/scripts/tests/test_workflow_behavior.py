@@ -620,30 +620,57 @@ class ProjectBoardTokenBehaviorTest(unittest.TestCase):
     def setUpClass(cls):
         cls.script = _step("ci-pr-issue-tracking.yml", "Add tracking issue to RCAS Tracking board", job="create-issue")
 
-    def test_empty_token_warns_and_skips_gh(self):
+    MOCK_GH = """#!/bin/sh
+printf '%s\\n' "$*" >> "$GH_LOG"
+case "$*" in
+  *"user(login"*) echo '{"id":"PROJ","field":{"id":"FIELD","options":[{"id":"O1","name":"Todo"},{"id":"O2","name":"Assessment"}]}}' ;;
+  *addProjectV2ItemById*) echo ITEM ;;
+  *updateProjectV2ItemFieldValue*) ;;
+  *"repos/"*) echo ISSUE_NODE ;;
+  *) exit 98 ;;
+esac
+"""
+
+    def run_step(self, token):
         with tempfile.TemporaryDirectory() as directory:
             gh = pathlib.Path(directory) / "gh"
-            gh.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+            gh.write_text(self.MOCK_GH, encoding="utf-8")
             gh.chmod(0o755)
+            log = pathlib.Path(directory) / "gh.log"
             result = subprocess.run(
                 ["/bin/bash", "-c", self.script],
                 check=False,
                 capture_output=True,
                 text=True,
-                env=os.environ | {"PATH": directory, "GH_TOKEN": ""},
+                env=os.environ | {
+                    "PATH": directory + os.pathsep + os.environ["PATH"],
+                    "GH_TOKEN": token,
+                    "GH_LOG": str(log),
+                    "GITHUB_REPOSITORY": "martinslavov/rcas",
+                    "ISSUE_URL": "https://github.com/martinslavov/rcas/issues/141",
+                },
             )
+            calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+        return result, calls
 
+    def test_empty_token_warns_and_skips_gh(self):
+        result, calls = self.run_step("")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("::warning::PROJECT_TOKEN is unavailable; skipping the RCAS Tracking board step.", result.stdout)
+        self.assertEqual(calls, [])
 
-    def test_nonempty_token_keeps_existing_board_operations(self):
-        for operation in (
-            "gh api graphql",
-            "addProjectV2ItemById",
-            "updateProjectV2ItemFieldValue",
-        ):
-            with self.subTest(operation=operation):
-                self.assertIn(operation, self.script)
+    def test_nonempty_token_runs_existing_board_operations(self):
+        result, calls = self.run_step("token")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("::warning::", result.stdout)
+        self.assertEqual(len(calls), 4, calls)
+        self.assertIn("user(login", calls[0])
+        self.assertIn("projectV2(number: 1)", calls[0])
+        self.assertEqual(calls[1], "api repos/martinslavov/rcas/issues/141 --jq .node_id")
+        self.assertIn("addProjectV2ItemById", calls[2])
+        self.assertIn("-f project=PROJ -f content=ISSUE_NODE", calls[2])
+        self.assertIn("updateProjectV2ItemFieldValue", calls[3])
+        self.assertIn("-f project=PROJ -f item=ITEM -f field=FIELD -f option=O2", calls[3])
 
 
 if __name__ == "__main__":
