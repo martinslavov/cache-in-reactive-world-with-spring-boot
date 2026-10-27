@@ -1,7 +1,8 @@
-# Tags every merged PR commit on main with the next SemVer tag, publishes a GitHub release with the jar.
+# Tags every merged PR commit on main with the next SemVer tag, publishes the jar and matching GHCR image.
 # A push fallback handles fork PRs, whose pull_request token cannot create tags.
 # Bump from the merged PR labels: major -> major, enhancement -> minor, otherwise patch; first tag is v0.1.0.
 # Re-running for an already tagged commit creates no new tag.
+# CI Release updates latest to the highest stable SemVer and prunes images with releases after verifying deletion.
 # Privilege separation: the read-only plan job may check out and run the repository helper; the contents:write tag job
 # never checks out the repository or runs repository scripts, and re-validates every value it receives from plan.
 name: CI Tag
@@ -197,6 +198,10 @@ jobs:
     if: needs.tag.outputs.tag != ''
     permissions:
       contents: write
+      packages: write
     uses: ./.github/workflows/ci-release.yml
     with:
       tag: ${{ needs.tag.outputs.tag }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

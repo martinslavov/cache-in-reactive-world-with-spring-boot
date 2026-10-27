@@ -1,114 +1,330 @@
-# Runs the tests and publishes a GitHub release with the executable jar.
-# Release notes are generated from the merged pull requests and commits.
-# Called by ci-tag.yml after merges into main; a manually pushed tag also triggers it,
-# for example: git tag v1.0.0 && git push origin v1.0.0. An existing release is left unchanged.
-# Each successful release keeps only the two newest stable vX.Y.Z releases and tags.
+# Builds and tests stable tags, publishes the image first, updates release notes idempotently and prunes old images/releases.
+# Called by ci-tag.yml; push tags and validated manual dispatches support automatic releases and historical backfills.
+# The release-tag job queue serializes publication, release mutation, latest alias changes and retention pruning.
 name: CI Release
-
 on:
   push:
-    tags:
-      - "v**"
+    tags: ["v**"]
   workflow_call:
     inputs:
       tag:
         description: Existing tag to release
         required: true
         type: string
-
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable vX.Y.Z tag to release or backfill
+        required: true
+        type: string
 permissions: {}
-
 env:
   KEEP_RELEASES: "2"
-
 jobs:
-  release:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      commit: ${{ steps.resolve.outputs.commit }}
+    steps:
+      - name: Validate tag and resolve its commit
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          [[ "$TAG" =~ $semver ]] || { echo "::error::Expected an existing strict stable vX.Y.Z tag" >&2; exit 1; }
+          ref=$(gh api "repos/$REPO/git/ref/tags/$TAG")
+          kind=$(jq -r '.object.type' <<< "$ref")
+          commit=$(jq -r '.object.sha' <<< "$ref")
+          while [ "$kind" = tag ]; do
+            ref=$(gh api "repos/$REPO/git/tags/$commit")
+            kind=$(jq -r '.object.type' <<< "$ref")
+            commit=$(jq -r '.object.sha' <<< "$ref")
+          done
+          [[ "$kind" == commit && "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Tag does not resolve to a commit" >&2; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+  build:
+    needs: resolve
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Same global queue as the ci-tag.yml tag job, so manual tag pushes and automatic releases never overlap.
-    concurrency:
-      group: release-tag
-      queue: max
     permissions:
-      contents: write
-
+      contents: read
     steps:
-      - name: Checkout
+      - name: Checkout selected tag commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          ref: ${{ needs.resolve.outputs.commit }}
           persist-credentials: false
-
+      - name: Verify selected commit
+        env:
+          EXPECTED_COMMIT: ${{ needs.resolve.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
       - name: Set up JDK 25
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: "25"
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
-
       - name: Build and test
         run: ./gradlew build
-
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag || github.ref_name }}
-          REPO: ${{ github.repository }}
+      - name: Package jar and health-check class
         run: |
           set -euo pipefail
-          if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
-            echo "Release $TAG already exists"
-            exit 0
-          fi
-          gh release create "$TAG" build/libs/*.jar -R "$REPO" --title "$TAG" --generate-notes --verify-tag
-
-  prune:
-    needs: release
+          jar_count=$(find build/libs -maxdepth 1 -type f -name 'rcas-*.jar' | wc -l | tr -d '[:space:]')
+          [ "$jar_count" -eq 1 ] && [ -f build/healthcheck/HealthCheck.class ] || { echo "::error::Expected exactly one boot jar and HealthCheck.class" >&2; exit 1; }
+          jar=$(find build/libs -maxdepth 1 -type f -name 'rcas-*.jar' -print -quit)
+          tar -czf release-image-context.tar.gz "$jar" build/healthcheck/HealthCheck.class
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-image-context
+          path: release-image-context.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+  publish:
+    needs: [resolve, build]
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    # Pruning deletes tags/releases; serializing it in the global queue prevents two runs deleting the same tag.
+    timeout-minutes: 30
+    concurrency:
+      group: release-tag
+      queue: max
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.publish.outputs.digest }}
+    steps:
+      - name: Checkout selected tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+      - name: Verify checkout matches tag commit
+        env:
+          EXPECTED_COMMIT: ${{ needs.resolve.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+      - name: Download build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-image-context
+          path: ${{ runner.temp }}/release-image-context
+      - name: Restore jar and health-check class
+        run: tar -xzf "$RUNNER_TEMP/release-image-context/release-image-context.tar.gz"
+      - name: Log in to Docker Hardened Images registry
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build or verify release image
+        id: publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          COMMIT: ${{ needs.resolve.outputs.commit }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$REPO:$TAG"
+          versions="$RUNNER_TEMP/package-versions.json"
+          if gh api --paginate --slurp "user/packages/container/rcas/versions?per_page=100" > "$versions" 2>"$RUNNER_TEMP/package-error"; then
+            ids=$(jq -r --arg tag "$TAG" 'add | .[] | select(any(.metadata.container.tags[]?; . == $tag)) | .id' "$versions")
+          elif grep -q 'HTTP 404' "$RUNNER_TEMP/package-error"; then
+            if docker pull "$image" 2>"$RUNNER_TEMP/existing-image-error"; then ids="registry-image"
+            elif grep -Eiq 'manifest unknown|manifest not found' "$RUNNER_TEMP/existing-image-error"; then ids=""
+            else cat "$RUNNER_TEMP/existing-image-error" >&2; echo "::error::Cannot verify whether $image already exists; refusing to overwrite" >&2; exit 1; fi
+          else cat "$RUNNER_TEMP/package-error" >&2; echo "::error::Cannot inspect GHCR versions; refusing an unsafe overwrite" >&2; exit 1; fi
+          verify_image_labels() {
+            actual_source=$(docker image inspect "$image" --format '{{ index .Config.Labels "org.opencontainers.image.source" }}')
+            actual_version=$(docker image inspect "$image" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')
+            actual_revision=$(docker image inspect "$image" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
+            if [ "$actual_source" != "https://github.com/$REPO" ] || [ "$actual_version" != "$TAG" ] || [ "$actual_revision" != "$COMMIT" ]; then
+              echo "::error::Image OCI labels do not match source, tag and resolved commit" >&2
+              return 1
+            fi
+          }
+          if [ -n "$ids" ]; then
+            docker pull "$image"
+            verify_image_labels
+          else
+            jar_count=$(find build/libs -maxdepth 1 -type f -name 'rcas-*.jar' | wc -l | tr -d '[:space:]')
+            [ "$jar_count" -eq 1 ] && [ -f build/healthcheck/HealthCheck.class ] || { echo "::error::Build artifacts are incomplete" >&2; exit 1; }
+            # CLI labels also cover historical tags whose Dockerfile predates OCI ARG/LABEL support.
+            docker build \
+              --build-arg "OCI_SOURCE=https://github.com/$REPO" \
+              --build-arg "OCI_VERSION=$TAG" \
+              --build-arg "OCI_REVISION=$COMMIT" \
+              --label "org.opencontainers.image.source=https://github.com/$REPO" \
+              --label "org.opencontainers.image.version=$TAG" \
+              --label "org.opencontainers.image.revision=$COMMIT" \
+              --tag "$image" .
+            verify_image_labels
+            docker push "$image"
+          fi
+          digest=$(docker image inspect "$image" --format '{{range .RepoDigests}}{{println .}}{{end}}' | awk -F@ -v image="ghcr.io/$REPO" '$1 == image { print $2; exit }')
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::Unable to verify image digest" >&2; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Log out of GitHub Container Registry
+        if: always()
+        run: docker logout ghcr.io
+      - name: Log out of Docker Hardened Images registry
+        if: always()
+        run: docker logout dhi.io
+      - name: Verify no registry credentials remain
+        if: always()
+        run: |
+          config="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
+          if [ -f "$config" ] && jq -e '(.auths // {}) + (.credHelpers // {}) | has("ghcr.io") or has("dhi.io")' "$config" >/dev/null; then echo "::error::Registry credentials remain in $config" >&2; exit 1; fi
+  release:
+    needs: [resolve, build, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     concurrency:
       group: release-tag
       queue: max
     permissions:
       contents: write
-
     steps:
-      - name: Delete old releases and tags
+      - name: Download release jar
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-image-context
+          path: ${{ runner.temp }}/release-image-context
+      - name: Restore release jar
+        run: tar -xzf "$RUNNER_TEMP/release-image-context/release-image-context.tar.gz"
+      - name: Create or update release notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          IMAGE: ghcr.io/${{ github.repository }}:${{ needs.resolve.outputs.tag }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
         run: |
           set -euo pipefail
-
-          # Fetch the complete release list before deleting anything. If this API call
-          # fails (including on a later page), set -e and pipefail stop the step closed.
-          release_rows=$(gh api "repos/$REPO/releases" --paginate \
-            --jq '.[] | [.tag_name, (.id | tostring)] | @tsv')
-
-          # Match stable SemVer only, then sort each numeric component descending.
-          old_tags=$(gh api "repos/$REPO/git/matching-refs/tags/v" --paginate \
-            --jq '.[].ref | sub("^refs/tags/"; "")' \
-            | awk '/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ { sub(/^v/, ""); print }' \
-            | sort -t. -k1,1nr -k2,2nr -k3,3nr \
-            | sed 's/^/v/')
-
-          retained=0
+          notes="$RUNNER_TEMP/release-notes.md"
+          if release=$(gh api "repos/$REPO/releases/tags/$TAG" 2>"$RUNNER_TEMP/release-error"); then
+            release_id=$(jq -r '.id' <<< "$release")
+            jq -r '.body // ""' <<< "$release" > "$notes"
+            python3 - "$notes" "$IMAGE" "$DIGEST" <<'PY'
+          import pathlib, sys
+          path = pathlib.Path(sys.argv[1])
+          marker = "<!-- rcas-image-reference -->"
+          body = path.read_text(encoding="utf-8").split(marker, 1)[0].rstrip()
+          section = f"{marker}\n\nContainer image: `{sys.argv[2]}`\n\nDigest: `{sys.argv[3]}`"
+          path.write_text(f"{body}\n\n{section}\n", encoding="utf-8")
+          PY
+            gh api -X PATCH "repos/$REPO/releases/$release_id" -F "body=@$notes" >/dev/null
+          else
+            grep -q 'HTTP 404' "$RUNNER_TEMP/release-error" || { cat "$RUNNER_TEMP/release-error" >&2; exit 1; }
+            gh api -X POST "repos/$REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body > "$notes"
+            python3 - "$notes" "$IMAGE" "$DIGEST" <<'PY'
+          import pathlib, sys
+          path = pathlib.Path(sys.argv[1])
+          body = path.read_text(encoding="utf-8").rstrip()
+          section = f"<!-- rcas-image-reference -->\n\nContainer image: `{sys.argv[2]}`\n\nDigest: `{sys.argv[3]}`"
+          path.write_text(f"{body}\n\n{section}\n", encoding="utf-8")
+          PY
+            gh release create "$TAG" build/libs/*.jar -R "$REPO" --title "$TAG" --notes-file "$notes" --verify-tag
+          fi
+  latest:
+    needs: [release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: release-tag
+      queue: max
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Point latest at the highest stable release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          latest_tag=$(gh api --paginate "repos/$REPO/releases?per_page=100" --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' | awk '/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ { print }' | sort -V | tail -n 1)
+          [ -n "$latest_tag" ] || { echo "::error::No stable release is available" >&2; exit 1; }
+          docker pull "$IMAGE:$latest_tag"
+          docker tag "$IMAGE:$latest_tag" "$IMAGE:latest"
+          docker push "$IMAGE:latest"
+      - name: Log out of GitHub Container Registry
+        if: always()
+        run: docker logout ghcr.io
+      - name: Verify no GHCR credentials remain
+        if: always()
+        run: |
+          config="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
+          if [ -f "$config" ] && jq -e '(.auths // {}) + (.credHelpers // {}) | has("ghcr.io")' "$config" >/dev/null; then echo "::error::GHCR credentials remain in $config" >&2; exit 1; fi
+  prune:
+    needs: [latest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: release-tag
+      queue: max
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Prune stale images before releases and tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          KEEP_RELEASES: ${{ env.KEEP_RELEASES }}
+        run: |
+          set -euo pipefail
+          release_rows=$(gh api --paginate "repos/$REPO/releases?per_page=100" --jq '.[] | [.tag_name, (.id | tostring)] | @tsv')
+          all_tags=$(gh api "repos/$REPO/git/matching-refs/tags/v" --paginate --jq '.[].ref | sub("^refs/tags/"; "")' | awk '/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ { print }' | sort -V -r)
+          retained=$(printf '%s\n' "$all_tags" | head -n "$KEEP_RELEASES")
+          stale=$(printf '%s\n' "$all_tags" | tail -n +$((KEEP_RELEASES + 1)))
+          [ -n "$stale" ] || exit 0
+          versions="$RUNNER_TEMP/package-versions.json"
+          if ! gh api --paginate --slurp "user/packages/container/rcas/versions?per_page=100" > "$versions" 2>"$RUNNER_TEMP/package-error"; then
+            cat "$RUNNER_TEMP/package-error" >&2
+            echo "::error::Cannot inspect GHCR package versions; retaining all releases and tags" >&2
+            exit 1
+          fi
+          stale_json=$(printf '%s\n' "$stale" | jq -R . | jq -s .)
+          if [ -n "$versions" ]; then
+            ids=$(jq -r --argjson stale "$stale_json" 'add | .[] as $version | ($version.metadata.container.tags // []) as $tags | select(any($tags[]?; . as $tag | $stale | index($tag))) | select(all($tags[]?; . as $tag | ($stale | index($tag)) != null)) | $version.id' "$versions" | sort -u)
+            for id in $ids; do
+              tags=$(jq -r --arg id "$id" 'add | .[] | select((.id | tostring) == $id) | .metadata.container.tags[]?' "$versions" | paste -sd, -)
+              if ! gh api -X DELETE "user/packages/container/rcas/versions/$id"; then echo "::error::GHCR deletion denied for stale version $id (tags: $tags); release/tag metadata is retained. Ask the package owner to grant package-version deletion access, then rerun." >&2; exit 1; fi
+            done
+          fi
           while IFS= read -r tag; do
-            [[ -n "$tag" ]] || continue
-            if (( retained < KEEP_RELEASES )); then
-              ((retained += 1))
-              continue
-            fi
-
-            # Delete a release by its ID first; only then remove its tag ref. When no
-            # release was listed for a tag, remove only the orphaned tag ref.
-            release_id=$(awk -F '\t' -v tag="$tag" '$1 == tag { print $2; exit }' <<< "$release_rows")
-            if [[ -n "$release_id" ]]; then
-              gh api -X DELETE "repos/$REPO/releases/$release_id"
-            fi
+            [ -n "$tag" ] || continue
+            if printf '%s\n' "$retained" | grep -Fxq "$tag"; then continue; fi
+            id=$(awk -F '\t' -v tag="$tag" '$1 == tag { print $2; exit }' <<< "$release_rows")
+            [ -z "$id" ] || gh api -X DELETE "repos/$REPO/releases/$id"
             gh api -X DELETE "repos/$REPO/git/refs/tags/$tag"
-            echo "Deleted $tag"
-          done <<< "$old_tags"
+            echo "Deleted stale release/tag $tag after image deletion"
+          done <<< "$all_tags"
