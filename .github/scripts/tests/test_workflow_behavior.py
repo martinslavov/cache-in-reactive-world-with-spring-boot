@@ -485,6 +485,62 @@ class ResolveTagBehaviorTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f"commit={SHA_A}", existing.output.read_text(encoding="utf-8"))
 
+class BackfillExistingReleaseEndToEndTest(unittest.TestCase):
+    """Runs the extracted resolve -> publish -> release steps for a workflow_dispatch backfill."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.resolve = _step("ci-release.yml", "Validate tag and resolve its commit", job="resolve")
+        cls.publish = _step("ci-release.yml", "Build or verify release image", job="publish")
+        cls.release = _step("ci-release.yml", "Create or update release notes", job="release")
+
+    def test_dispatch_tag_input_feeds_the_resolve_step(self):
+        text = (ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch:\n    inputs:\n      tag:", text)
+        self.assertIn("TAG: ${{ inputs.tag || github.event.inputs.tag || github.ref_name }}", text)
+
+    def test_dispatch_rejects_non_strict_tags_without_calling_gh(self):
+        for tag in ("v1.2", "1.2.3", "v1.2.3-rc.1", "v01.2.3", "v1.2.3\nx", "main", "v1.2.3; touch pwned"):
+            with self.subTest(tag=tag):
+                gh = WorkflowMock(self, refs={"v1.2.3": SHA_A})
+                result = gh.run(self.resolve, TAG=tag)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(gh.state()["calls"], [])
+                self.assertEqual(gh.output.read_text(encoding="utf-8"), "")
+                self.assertFalse((gh.path / "pwned").exists())
+
+    def test_backfill_of_existing_release_publishes_image_and_keeps_jar_asset(self):
+        original = {"id": 7, "body": "Original release notes", "assets": ["original.jar"]}
+        gh = WorkflowMock(self, refs={"v0.1.0": SHA_A}, releases={"v0.1.0": original})
+
+        resolved = gh.run(self.resolve, TAG="v0.1.0")
+        self.assertEqual(resolved.returncode, 0, resolved.stderr)
+        outputs = dict(line.split("=", 1) for line in gh.output.read_text(encoding="utf-8").splitlines())
+        self.assertEqual(outputs, {"tag": "v0.1.0", "commit": SHA_A})
+
+        gh.output.write_text("", encoding="utf-8")
+        published = gh.run(self.publish, TAG=outputs["tag"], COMMIT=outputs["commit"])
+        self.assertEqual(published.returncode, 0, published.stdout + published.stderr)
+        state = gh.state()
+        self.assertIn(["push", "ghcr.io/test/repo:v0.1.0"], state["docker"])
+        self.assertEqual(state["image_labels"]["org.opencontainers.image.revision"], SHA_A)
+        digest = dict(line.split("=", 1) for line in gh.output.read_text(encoding="utf-8").splitlines())["digest"]
+        self.assertEqual(digest, "sha256:" + "a" * 64)
+
+        for _ in range(2):
+            released = gh.run(self.release, TAG=outputs["tag"], DIGEST=digest,
+                              IMAGE=f"ghcr.io/test/repo:{outputs['tag']}")
+            self.assertEqual(released.returncode, 0, released.stdout + released.stderr)
+        state = gh.state()
+        release = state["releases"]["v0.1.0"]
+        self.assertEqual(release["assets"], ["original.jar"])
+        self.assertIn("Original release notes", release["body"])
+        self.assertEqual(release["body"].count("ghcr.io/test/repo:v0.1.0"), 1)
+        self.assertEqual(release["body"].count(digest), 1)
+        self.assertFalse([c for c in state["calls"] if c[0] == "create-release"])
+        self.assertEqual(len(state["releases"]), 1)
+
+
 class DocumentationBehaviorTest(unittest.TestCase):
     def test_readme_documents_image_tags_latest_retention_and_run_configuration(self):
         readme = (ROOT.parent / "README.md").read_text(encoding="utf-8")
