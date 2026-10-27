@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import pathlib
@@ -11,6 +12,22 @@ from tests.test_workflow_security import ROOT, _jobs, _steps
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
+
+# Exact manifest bytes (with a trailing newline that must not be stripped) and their digests.
+SINGLE = '{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"size":1}}\n'
+
+
+def _sha(raw):
+    return "sha256:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _index(media_type, *children):
+    return json.dumps({"schemaVersion": 2, "mediaType": media_type,
+                       "manifests": [{"digest": child, "mediaType": "x"} for child in children]})
+
+
+DOCKER_LIST = "application/vnd.docker.distribution.manifest.list.v2+json"
+OCI_INDEX = "application/vnd.oci.image.index.v1+json"
 
 # Mock GitHub CLI backed by a JSON file so refs/releases persist across invocations.
 MOCK_GH = textwrap.dedent(
@@ -380,12 +397,47 @@ MOCK_CURL = textwrap.dedent(
 )
 
 
+MOCK_SKOPEO = textwrap.dedent(
+    """\
+    #!/usr/bin/env python3
+    import json, os, sys
+    path = os.environ["GH_MOCK_STATE"]
+    state = json.load(open(path, encoding="utf-8"))
+    args = sys.argv[1:]
+    state.setdefault("skopeo", []).append(args)
+    def save(): json.dump(state, open(path, "w", encoding="utf-8"))
+    manifests = state.setdefault("manifests", {})
+    code = 0
+    if args[:2] == ["inspect", "--raw"]:
+        ref = args[2].removeprefix("docker://")
+        if state.get("inspect_error") and ref.startswith("docker.io/"):
+            print(state["inspect_error"], file=sys.stderr); code = 1
+        elif ref not in manifests:
+            print("manifest unknown", file=sys.stderr); code = 1
+        else:
+            sys.stdout.write(manifests[ref])
+    elif args[:1] == ["copy"]:
+        if not {"--all", "--preserve-digests"} <= set(args):
+            print("not digest preserving", file=sys.stderr); code = 2
+        elif state.get("fail_hub_push"):
+            print(state.get("hub_push_error", "denied: requested access to resource is denied"), file=sys.stderr); code = 1
+        else:
+            source, destination = (a.removeprefix("docker://") for a in args[-2:])
+            manifests[destination] = state.get("copy_result", manifests[source])
+    else:
+        print("unexpected skopeo invocation: " + repr(args), file=sys.stderr); code = 2
+    save()
+    sys.exit(code)
+    """
+)
+
+
 class WorkflowMock:
     def __init__(self, test, **state):
         self.temp = tempfile.TemporaryDirectory()
         test.addCleanup(self.temp.cleanup)
         self.path = pathlib.Path(self.temp.name)
-        for name, body in (("gh", MOCK_RELEASE_GH), ("docker", MOCK_DOCKER), ("curl", MOCK_CURL)):
+        for name, body in (("gh", MOCK_RELEASE_GH), ("docker", MOCK_DOCKER), ("curl", MOCK_CURL), ("skopeo", MOCK_SKOPEO)):
             command = self.path / name
             command.write_text(body, encoding="utf-8")
             command.chmod(0o755)
@@ -603,43 +655,99 @@ class DockerHubImageBehaviorTest(unittest.TestCase):
         cls.required_secret_step = _step("ci-release.yml", "Require Docker Hub push credentials", job="dockerhub")
         cls.login_step = _step("ci-release.yml", "Log in to Docker Hub", job="dockerhub")
 
-    def publish(self, gh, **env):
-        return gh.run(self.script, DOCKERHUB_USERNAME="test", TAG="v0.1.0",
-                      DIGEST="sha256:" + "a" * 64, REPO="test/repo", **env)
+    IMAGE = "docker.io/test/rcas:v0.1.0"
+    SOURCE = "ghcr.io/test/repo@" + _sha(SINGLE)
 
-    def test_copies_manifest_by_ghcr_digest_and_verifies_hub_digest(self):
-        gh = WorkflowMock(self)
+    def publish(self, gh, **env):
+        return gh.run(self.script, DOCKERHUB_USERNAME="test", TAG="v0.1.0", DIGEST=_sha(SINGLE), REPO="test/repo", **env)
+
+    def mock(self, hub=None, **state):
+        manifests = {self.SOURCE: SINGLE}
+        if hub is not None:
+            manifests[self.IMAGE] = hub
+        return WorkflowMock(self, manifests=manifests, **state)
+
+    def copies(self, gh):
+        return [call for call in gh.state()["skopeo"] if call[0] == "copy"]
+
+    def test_missing_tag_is_copied_preserving_digest_without_wrapping_or_building(self):
+        gh = self.mock()
         result = self.publish(gh)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        commands = gh.state()["docker"]
-        self.assertIn(["buildx", "imagetools", "create", "--tag", "docker.io/test/rcas:v0.1.0",
-                       "ghcr.io/test/repo@sha256:" + "a" * 64], commands)
-        self.assertEqual(gh.state()["hub_images"]["docker.io/test/rcas:v0.1.0"], "sha256:" + "a" * 64)
-        self.assertFalse(any(command[0] == "build" for command in commands))
+        self.assertEqual(self.copies(gh), [["copy", "--all", "--preserve-digests",
+                                            "docker://" + self.SOURCE, "docker://" + self.IMAGE]])
+        self.assertEqual(gh.state()["manifests"][self.IMAGE], SINGLE)
+        self.assertEqual(gh.state()["docker"], [])
 
-    def test_same_digest_is_noop_and_different_digest_refuses_overwrite(self):
-        image = "docker.io/test/rcas:v0.1.0"
-        matching = WorkflowMock(self, hub_images={image: "sha256:" + "a" * 64})
-        result = self.publish(matching)
+    def test_existing_tag_at_expected_digest_is_unchanged(self):
+        gh = self.mock(hub=SINGLE)
+        result = self.publish(gh)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(any(command[2:3] == ["create"] for command in matching.state()["docker"]))
+        self.assertIn("leaving it unchanged", result.stdout)
+        self.assertEqual(self.copies(gh), [])
 
-        mismatch = WorkflowMock(self, hub_images={image: "sha256:" + "b" * 64})
-        result = self.publish(mismatch)
+    def test_single_child_wrapper_of_expected_digest_is_replaced_and_verified(self):
+        for media_type in (DOCKER_LIST, OCI_INDEX):
+            with self.subTest(media_type=media_type):
+                gh = self.mock(hub=_index(media_type, _sha(SINGLE)))
+                result = self.publish(gh)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(len(self.copies(gh)), 1)
+                self.assertEqual(gh.state()["manifests"][self.IMAGE], SINGLE)
+
+    def test_wrapper_replacement_that_does_not_restore_the_digest_fails(self):
+        gh = self.mock(hub=_index(DOCKER_LIST, _sha(SINGLE)), copy_result=_index(DOCKER_LIST, _sha(SINGLE)))
+        result = self.publish(gh)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Refusing to overwrite", result.stderr)
-        self.assertFalse(any("create" in command for command in mismatch.state()["docker"]))
+        self.assertIn("Docker Hub digest mismatch", result.stderr)
 
-    def test_digest_mismatch_and_denied_push_fail_visibly(self):
-        mismatch = WorkflowMock(self, hub_created_digest="sha256:" + "b" * 64)
+    def test_other_mismatches_fail_closed_without_any_copy(self):
+        other = "sha256:" + "b" * 64
+        cases = {
+            "other single manifest": '{"mediaType":"application/vnd.docker.distribution.manifest.v2+json","x":1}',
+            "list with other child": _index(DOCKER_LIST, other),
+            "list with two children": _index(DOCKER_LIST, _sha(SINGLE), other),
+            "list with no children": _index(DOCKER_LIST),
+            "list of unexpected media type": _index("application/vnd.example.list+json", _sha(SINGLE)),
+            "malformed json": "not json",
+        }
+        for name, hub in cases.items():
+            with self.subTest(name):
+                gh = self.mock(hub=hub)
+                result = self.publish(gh)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Refusing to overwrite", result.stderr)
+                self.assertEqual(self.copies(gh), [])
+
+    def test_inconclusive_inspection_fails_closed_without_any_copy(self):
+        gh = self.mock(inspect_error="received unexpected HTTP status: 500 Internal Server Error")
+        result = self.publish(gh)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Cannot verify", result.stderr)
+        self.assertEqual(self.copies(gh), [])
+
+    def test_digest_mismatch_after_copy_and_denied_push_fail_visibly(self):
+        mismatch = self.mock(copy_result=_index(DOCKER_LIST, _sha(SINGLE)))
         result = self.publish(mismatch)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Docker Hub digest mismatch", result.stderr)
 
-        denied = WorkflowMock(self, fail_hub_push=True)
+        denied = self.mock(fail_hub_push=True)
         result = self.publish(denied)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("DOCKERHUB_PUSH_TOKEN must have Read and Write scope", result.stderr)
+
+    def test_skopeo_availability_step_fails_clearly_when_missing(self):
+        step = _step("ci-release.yml", "Require skopeo", job="dockerhub")
+        with tempfile.TemporaryDirectory() as empty:
+            bash = subprocess.run(["bash", "-c", "command -v bash"], capture_output=True, text=True).stdout.strip()
+            os.symlink(bash, pathlib.Path(empty) / "bash")
+            missing = subprocess.run([str(pathlib.Path(empty) / "bash"), "-c", step], capture_output=True,
+                                     text=True, env={"PATH": empty})
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("skopeo is required", missing.stderr)
+        present = WorkflowMock(self).run(step)
+        self.assertEqual(present.returncode, 0, present.stderr)
 
     def test_missing_push_token_has_actionable_error(self):
         gh = WorkflowMock(self)
@@ -660,7 +768,7 @@ class DockerHubImageBehaviorTest(unittest.TestCase):
 
 
 # Fake docker CLI that stores credentials in $DOCKER_CONFIG/config.json like `docker login`/`docker logout`;
-# docker.io is normalised to the index server key. DOCKER_LOGOUT_BROKEN simulates a logout that leaves credentials.
+# login stores docker.io under the index server key; logout only removes the exact name given (like the real CLI). DOCKER_LOGOUT_BROKEN simulates a logout that leaves credentials.
 MOCK_DOCKER_CONFIG = textwrap.dedent(
     """\
     #!/usr/bin/env python3
@@ -674,7 +782,7 @@ MOCK_DOCKER_CONFIG = textwrap.dedent(
         data.setdefault("auths", {})[key(args[1])] = {"auth": "bW9jazptb2Nr"}
     elif args[:1] == ["logout"]:
         if not os.environ.get("DOCKER_LOGOUT_BROKEN"):
-            data.get("auths", {}).pop(key(args[1]), None)
+            data.get("auths", {}).pop(args[1] if len(args) > 1 else "https://index.docker.io/v1/", None)
     else:
         sys.exit("unexpected docker invocation: " + repr(args))
     config.write_text(json.dumps(data), encoding="utf-8")
@@ -688,7 +796,13 @@ def _job_steps(job, prefix):
 
 
 def _inline_run(step):
-    return next(line.split("run: ", 1)[1] for line in step.splitlines() if line.startswith("        run: "))
+    lines = step.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith("        run: |"):
+            return "\n".join(item.strip() for item in lines[index + 1:])
+        if line.startswith("        run: "):
+            return line.split("run: ", 1)[1]
+    raise AssertionError("no run script")
 
 
 class DockerHubCredentialCleanupBehaviorTest(unittest.TestCase):
@@ -729,7 +843,10 @@ class DockerHubCredentialCleanupBehaviorTest(unittest.TestCase):
         self.assertEqual(self.run_script(login, docker_config).returncode, 0)
         self.assertIn("https://index.docker.io/v1/", self.auths(docker_config))
         logouts = [_inline_run(step) for step in _job_steps(job, "Log out of")]
-        self.assertEqual(logouts, ["docker logout docker.io", "docker logout ghcr.io"])
+        self.assertEqual(len(logouts), 2)
+        self.assertIn("docker logout docker.io", logouts[0])
+        self.assertIn("docker logout https://index.docker.io/v1/", logouts[0])
+        self.assertEqual(logouts[1], "docker logout ghcr.io")
         for command in logouts:
             self.assertEqual(self.run_script(command, docker_config, **env).returncode, 0)
         return self.run_script(self.residue_check(job), docker_config)
@@ -888,26 +1005,41 @@ class LatestImageBehaviorTest(unittest.TestCase):
     def test_dockerhub_latest_only_advances_for_the_highest_stable_release(self):
         job = "dockerhub-latest"
         script = _step("ci-release.yml", "Point Docker Hub latest at the highest stable release", job=job)
-        previous_latest = "sha256:" + "b" * 64
+        previous_latest = '{"previous":"latest"}'
         release_tags = ["v2.9.0", "v2.10.0", "v10.0.0", "v11.0.0-rc.1", "v01.0.0"]
-        older = WorkflowMock(self, release_tags=release_tags,
-                             hub_images={"docker.io/test/rcas:latest": previous_latest})
+        latest = "docker.io/test/rcas:latest"
+        older = WorkflowMock(self, release_tags=release_tags, manifests={latest: previous_latest})
         result = older.run(script, TAG="v0.1.0", DOCKERHUB_USERNAME="test")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(any("create" in command for command in older.state().get("docker", [])))
+        self.assertFalse(any(call[0] == "copy" for call in older.state().get("skopeo", [])))
         self.assertIn("latest untouched", result.stdout)
-        self.assertEqual(older.state()["hub_images"]["docker.io/test/rcas:latest"], previous_latest)
+        self.assertEqual(older.state()["manifests"][latest], previous_latest)
 
-        highest_digest = "sha256:" + "c" * 64
+        highest = "sha256:" + hashlib.sha256(SINGLE.encode()).hexdigest()
         newest = WorkflowMock(self, release_tags=release_tags,
-                              ghcr_digests={"ghcr.io/test/repo:v10.0.0": highest_digest})
+                              manifests={"ghcr.io/test/repo:v10.0.0": SINGLE, "ghcr.io/test/repo@" + highest: SINGLE,
+                                         latest: previous_latest})
         result = newest.run(script, TAG="v10.0.0", DOCKERHUB_USERNAME="test")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(["buildx", "imagetools", "inspect", "ghcr.io/test/repo:v10.0.0",
-                       "--format", "{{.Manifest.Digest}}"], newest.state()["docker"])
-        self.assertIn(["buildx", "imagetools", "create", "--tag", "docker.io/test/rcas:latest",
-                       "ghcr.io/test/repo@" + highest_digest], newest.state()["docker"])
-        self.assertEqual(newest.state()["hub_images"]["docker.io/test/rcas:latest"], highest_digest)
+        self.assertEqual([call for call in newest.state()["skopeo"] if call[0] == "copy"],
+                         [["copy", "--all", "--preserve-digests", "docker://ghcr.io/test/repo@" + highest,
+                           "docker://" + latest]])
+        self.assertEqual(newest.state()["manifests"][latest], SINGLE)
+        self.assertEqual(newest.state()["docker"], [])
+
+        broken = WorkflowMock(self, release_tags=release_tags, copy_result=_index(DOCKER_LIST, highest),
+                              manifests={"ghcr.io/test/repo:v10.0.0": SINGLE, "ghcr.io/test/repo@" + highest: SINGLE})
+        result = broken.run(script, TAG="v10.0.0", DOCKERHUB_USERNAME="test")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("latest digest mismatch", result.stderr)
+
+    def test_dockerhub_latest_historical_backfill_does_not_regress_the_alias(self):
+        script = _step("ci-release.yml", "Point Docker Hub latest at the highest stable release", job="dockerhub-latest")
+        latest = "docker.io/test/rcas:latest"
+        gh = WorkflowMock(self, release_tags=["v0.1.0", "v0.2.0"], manifests={latest: SINGLE})
+        result = gh.run(script, TAG="v0.1.0", DOCKERHUB_USERNAME="test")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(gh.state().get("skopeo", []), [])
 
 
 class PruneStepBehaviorTest(unittest.TestCase):

@@ -197,6 +197,9 @@ class WorkflowSecurityTest(unittest.TestCase):
         self.assertIn("Verify no registry credentials remain", jobs["publish"])
         for job_name in ("dockerhub", "dockerhub-latest"):
             self.assertIn("docker logout docker.io", jobs[job_name])
+            self.assertIn("docker logout https://index.docker.io/v1/", jobs[job_name])
+            self.assertIn("skopeo copy --all --preserve-digests", jobs[job_name])
+            self.assertNotIn("imagetools create", jobs[job_name])
             self.assertIn("docker logout ghcr.io", jobs[job_name])
             self.assertIn("if: always()", jobs[job_name])
             self.assertIn("Verify no registry credentials remain", jobs[job_name])
