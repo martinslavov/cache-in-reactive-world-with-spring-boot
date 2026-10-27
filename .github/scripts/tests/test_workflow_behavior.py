@@ -296,7 +296,9 @@ MOCK_DOCKER = textwrap.dedent(
         if operation == "inspect":
             image = args[3]
             if image.startswith("ghcr.io/"):
-                digest = state.get("ghcr_digest", "sha256:" + "a" * 64)
+                digest = state.get("ghcr_digests", {}).get(
+                    image, state.get("ghcr_digest", "sha256:" + "a" * 64)
+                )
             else:
                 digest = state.get("hub_images", {}).get(image)
             if digest is None:
@@ -886,17 +888,26 @@ class LatestImageBehaviorTest(unittest.TestCase):
     def test_dockerhub_latest_only_advances_for_the_highest_stable_release(self):
         job = "dockerhub-latest"
         script = _step("ci-release.yml", "Point Docker Hub latest at the highest stable release", job=job)
-        older = WorkflowMock(self, release_tags=["v0.1.0", "v0.2.0"])
+        previous_latest = "sha256:" + "b" * 64
+        release_tags = ["v2.9.0", "v2.10.0", "v10.0.0", "v11.0.0-rc.1", "v01.0.0"]
+        older = WorkflowMock(self, release_tags=release_tags,
+                             hub_images={"docker.io/test/rcas:latest": previous_latest})
         result = older.run(script, TAG="v0.1.0", DOCKERHUB_USERNAME="test")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(any("create" in command for command in older.state().get("docker", [])))
         self.assertIn("latest untouched", result.stdout)
+        self.assertEqual(older.state()["hub_images"]["docker.io/test/rcas:latest"], previous_latest)
 
-        newest = WorkflowMock(self, release_tags=["v0.1.0", "v0.2.0"])
-        result = newest.run(script, TAG="v0.2.0", DOCKERHUB_USERNAME="test")
+        highest_digest = "sha256:" + "c" * 64
+        newest = WorkflowMock(self, release_tags=release_tags,
+                              ghcr_digests={"ghcr.io/test/repo:v10.0.0": highest_digest})
+        result = newest.run(script, TAG="v10.0.0", DOCKERHUB_USERNAME="test")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(["buildx", "imagetools", "inspect", "ghcr.io/test/repo:v10.0.0",
+                       "--format", "{{.Manifest.Digest}}"], newest.state()["docker"])
         self.assertIn(["buildx", "imagetools", "create", "--tag", "docker.io/test/rcas:latest",
-                       "ghcr.io/test/repo@sha256:" + "a" * 64], newest.state()["docker"])
+                       "ghcr.io/test/repo@" + highest_digest], newest.state()["docker"])
+        self.assertEqual(newest.state()["hub_images"]["docker.io/test/rcas:latest"], highest_digest)
 
 
 class PruneStepBehaviorTest(unittest.TestCase):
