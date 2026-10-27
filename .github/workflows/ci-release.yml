@@ -1,4 +1,4 @@
-# Builds and tests stable tags, publishes the image first, updates release notes idempotently and prunes old images/releases.
+# Builds and tests stable tags, publishes to GHCR and Docker Hub, updates release notes idempotently and prunes old images/releases.
 # Called by ci-tag.yml; push tags and validated manual dispatches support automatic releases and historical backfills.
 # The release-tag job queue serializes publication, release mutation, latest alias changes and retention pruning.
 name: CI Release
@@ -16,6 +16,8 @@ on:
         required: true
       DOCKERHUB_TOKEN:
         required: true
+      DOCKERHUB_PUSH_TOKEN:
+        required: false
   workflow_dispatch:
     inputs:
       tag:
@@ -195,8 +197,91 @@ jobs:
         run: |
           config="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
           if [ -f "$config" ] && jq -e '(.auths // {}) + (.credHelpers // {}) | has("ghcr.io") or has("dhi.io")' "$config" >/dev/null; then echo "::error::Registry credentials remain in $config" >&2; exit 1; fi
+  dockerhub:
+    needs: [resolve, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: release-tag
+      queue: max
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Require Docker Hub push credentials
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PUSH_TOKEN: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_PUSH_TOKEN" ]; then
+            echo "::error::Docker Hub publishing requires DOCKERHUB_USERNAME and DOCKERHUB_PUSH_TOKEN (a Read, Write & Delete Docker Hub PAT). Add the repository secret and rerun the release." >&2
+            exit 1
+          fi
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PUSH_TOKEN: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
+        run: |
+          if ! printf '%s' "$DOCKERHUB_PUSH_TOKEN" | docker login docker.io --username "$DOCKERHUB_USERNAME" --password-stdin 2>"$RUNNER_TEMP/dockerhub-login-error"; then
+            cat "$RUNNER_TEMP/dockerhub-login-error" >&2
+            echo "::error::Docker Hub login was denied. DOCKERHUB_PUSH_TOKEN must be a Docker Hub PAT with Read and Write access (and Delete for retention pruning)." >&2
+            exit 1
+          fi
+      - name: Copy or verify Docker Hub release image
+        env:
+          REPO: ${{ github.repository }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          image="docker.io/$DOCKERHUB_USERNAME/rcas:$TAG"
+          inspect_digest() {
+            docker buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}' 2>"$RUNNER_TEMP/dockerhub-inspect-error"
+          }
+          if actual=$(inspect_digest "$image"); then
+            if [ "$actual" = "$DIGEST" ]; then
+              echo "$image already points to $DIGEST; leaving it unchanged"
+            else
+              echo "::error::Refusing to overwrite $image: it points to $actual, expected $DIGEST" >&2
+              exit 1
+            fi
+          else
+            if ! grep -Eiq 'manifest unknown|manifest not found|not found' "$RUNNER_TEMP/dockerhub-inspect-error"; then
+              cat "$RUNNER_TEMP/dockerhub-inspect-error" >&2
+              echo "::error::Cannot verify $image on Docker Hub; refusing an unsafe overwrite" >&2
+              exit 1
+            fi
+            source="ghcr.io/$REPO@$DIGEST"
+            if ! docker buildx imagetools create --tag "$image" "$source" 2>"$RUNNER_TEMP/dockerhub-push-error"; then
+              cat "$RUNNER_TEMP/dockerhub-push-error" >&2
+              if grep -Eiq '401|403|denied|insufficient_scope|unauthorized' "$RUNNER_TEMP/dockerhub-push-error"; then
+                echo "::error::Docker Hub denied image publication; DOCKERHUB_PUSH_TOKEN must have Read and Write scope (and Delete for retention pruning)." >&2
+              fi
+              exit 1
+            fi
+            actual=$(inspect_digest "$image") || { cat "$RUNNER_TEMP/dockerhub-inspect-error" >&2; echo "::error::Unable to verify the Docker Hub image digest after copying" >&2; exit 1; }
+            [ "$actual" = "$DIGEST" ] || { echo "::error::Docker Hub digest mismatch for $image: expected $DIGEST, found $actual" >&2; exit 1; }
+          fi
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout docker.io
+      - name: Log out of GitHub Container Registry
+        if: always()
+        run: docker logout ghcr.io
+      - name: Verify no registry credentials remain
+        if: always()
+        run: |
+          config="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
+          if [ -f "$config" ] && jq -e '(.auths // {}) + (.credHelpers // {}) | has("ghcr.io") or has("docker.io") or has("https://index.docker.io/v1/")' "$config" >/dev/null; then echo "::error::Registry credentials remain in $config" >&2; exit 1; fi
   release:
-    needs: [resolve, build, publish]
+    needs: [resolve, build, publish, dockerhub]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
@@ -218,31 +303,58 @@ jobs:
           REPO: ${{ github.repository }}
           TAG: ${{ needs.resolve.outputs.tag }}
           IMAGE: ghcr.io/${{ github.repository }}:${{ needs.resolve.outputs.tag }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DIGEST: ${{ needs.publish.outputs.digest }}
         run: |
           set -euo pipefail
+          [ -n "$DOCKERHUB_USERNAME" ] || { echo "::error::DOCKERHUB_USERNAME is required to reference the Docker Hub image" >&2; exit 1; }
+          HUB_IMAGE="docker.io/$DOCKERHUB_USERNAME/rcas:$TAG"
+          HUB_URL="https://hub.docker.com/r/$DOCKERHUB_USERNAME/rcas"
           notes="$RUNNER_TEMP/release-notes.md"
           if release=$(gh api "repos/$REPO/releases/tags/$TAG" 2>"$RUNNER_TEMP/release-error"); then
             release_id=$(jq -r '.id' <<< "$release")
             jq -r '.body // ""' <<< "$release" > "$notes"
-            python3 - "$notes" "$IMAGE" "$DIGEST" <<'PY'
-          import pathlib, sys
+            python3 - "$notes" "$IMAGE" "$HUB_IMAGE" "$DIGEST" "$REPO" "$HUB_URL" <<'PY'
+          import pathlib, re, sys, textwrap
           path = pathlib.Path(sys.argv[1])
-          marker = "<!-- rcas-image-reference -->"
-          body = path.read_text(encoding="utf-8").split(marker, 1)[0].rstrip()
-          section = f"{marker}\n\nContainer image: `{sys.argv[2]}`\n\nDigest: `{sys.argv[3]}`"
-          path.write_text(f"{body}\n\n{section}\n", encoding="utf-8")
+          body = path.read_text(encoding="utf-8")
+          body = re.sub(r"(?s)<!-- rcas-docker-image:start -->.*?<!-- rcas-docker-image:end -->\s*", "", body)
+          body = body.split("<!-- rcas-image-reference -->", 1)[0].rstrip()
+          section = textwrap.dedent(f"""<!-- rcas-docker-image:start -->
+          ## Docker image
+
+          ```bash
+          docker pull {sys.argv[2]}
+          docker pull {sys.argv[3]}
+          ```
+
+          Digest: `{sys.argv[4]}`
+
+          [GitHub Container Registry](https://github.com/{sys.argv[5]}/pkgs/container/rcas) · [Docker Hub]({sys.argv[6]})
+          <!-- rcas-docker-image:end -->""").strip()
+          path.write_text(f"{section}\n\n{body}\n" if body else f"{section}\n", encoding="utf-8")
           PY
             gh api -X PATCH "repos/$REPO/releases/$release_id" -F "body=@$notes" >/dev/null
           else
             grep -q 'HTTP 404' "$RUNNER_TEMP/release-error" || { cat "$RUNNER_TEMP/release-error" >&2; exit 1; }
             gh api -X POST "repos/$REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body > "$notes"
-            python3 - "$notes" "$IMAGE" "$DIGEST" <<'PY'
-          import pathlib, sys
+            python3 - "$notes" "$IMAGE" "$HUB_IMAGE" "$DIGEST" "$REPO" "$HUB_URL" <<'PY'
+          import pathlib, sys, textwrap
           path = pathlib.Path(sys.argv[1])
           body = path.read_text(encoding="utf-8").rstrip()
-          section = f"<!-- rcas-image-reference -->\n\nContainer image: `{sys.argv[2]}`\n\nDigest: `{sys.argv[3]}`"
-          path.write_text(f"{body}\n\n{section}\n", encoding="utf-8")
+          section = textwrap.dedent(f"""<!-- rcas-docker-image:start -->
+          ## Docker image
+
+          ```bash
+          docker pull {sys.argv[2]}
+          docker pull {sys.argv[3]}
+          ```
+
+          Digest: `{sys.argv[4]}`
+
+          [GitHub Container Registry](https://github.com/{sys.argv[5]}/pkgs/container/rcas) · [Docker Hub]({sys.argv[6]})
+          <!-- rcas-docker-image:end -->""").strip()
+          path.write_text(f"{section}\n\n{body}\n" if body else f"{section}\n", encoding="utf-8")
           PY
             gh release create "$TAG" build/libs/*.jar -R "$REPO" --title "$TAG" --notes-file "$notes" --verify-tag
           fi
@@ -283,8 +395,80 @@ jobs:
         run: |
           config="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
           if [ -f "$config" ] && jq -e '(.auths // {}) + (.credHelpers // {}) | has("ghcr.io")' "$config" >/dev/null; then echo "::error::GHCR credentials remain in $config" >&2; exit 1; fi
+  dockerhub-latest:
+    needs: [resolve, latest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: release-tag
+      queue: max
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Require Docker Hub push credentials
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PUSH_TOKEN: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_PUSH_TOKEN" ]; then
+            echo "::error::Docker Hub latest publishing requires DOCKERHUB_USERNAME and DOCKERHUB_PUSH_TOKEN (a Read, Write & Delete Docker Hub PAT). Add the repository secret and rerun the release." >&2
+            exit 1
+          fi
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PUSH_TOKEN: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
+        run: |
+          if ! printf '%s' "$DOCKERHUB_PUSH_TOKEN" | docker login docker.io --username "$DOCKERHUB_USERNAME" --password-stdin 2>"$RUNNER_TEMP/dockerhub-login-error"; then
+            cat "$RUNNER_TEMP/dockerhub-login-error" >&2
+            echo "::error::Docker Hub login was denied. DOCKERHUB_PUSH_TOKEN must be a Docker Hub PAT with Read and Write access (and Delete for retention pruning)." >&2
+            exit 1
+          fi
+      - name: Point Docker Hub latest at the highest stable release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          latest_tag=$(gh api --paginate "repos/$REPO/releases?per_page=100" --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' | awk '/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ { print }' | sort -V | tail -n 1)
+          [ -n "$latest_tag" ] || { echo "::error::No stable release is available" >&2; exit 1; }
+          if [ "$latest_tag" != "$TAG" ]; then
+            echo "Docker Hub latest untouched: $TAG is not the highest stable release ($latest_tag)"
+            exit 0
+          fi
+          source="ghcr.io/$REPO:$latest_tag"
+          digest=$(docker buildx imagetools inspect "$source" --format '{{.Manifest.Digest}}')
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::Unable to verify the GHCR latest image digest" >&2; exit 1; }
+          image="docker.io/$DOCKERHUB_USERNAME/rcas:latest"
+          if ! docker buildx imagetools create --tag "$image" "ghcr.io/$REPO@$digest" 2>"$RUNNER_TEMP/dockerhub-latest-error"; then
+            cat "$RUNNER_TEMP/dockerhub-latest-error" >&2
+            if grep -Eiq '401|403|denied|insufficient_scope|unauthorized' "$RUNNER_TEMP/dockerhub-latest-error"; then echo "::error::Docker Hub denied latest publication; DOCKERHUB_PUSH_TOKEN must have Read and Write scope (and Delete for retention pruning)." >&2; fi
+            exit 1
+          fi
+          actual=$(docker buildx imagetools inspect "$image" --format '{{.Manifest.Digest}}')
+          [ "$actual" = "$digest" ] || { echo "::error::Docker Hub latest digest mismatch: expected $digest, found $actual" >&2; exit 1; }
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout docker.io
+      - name: Log out of GitHub Container Registry
+        if: always()
+        run: docker logout ghcr.io
+      - name: Verify no registry credentials remain
+        if: always()
+        run: |
+          config="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
+          if [ -f "$config" ] && jq -e '(.auths // {}) + (.credHelpers // {}) | has("ghcr.io") or has("docker.io") or has("https://index.docker.io/v1/")' "$config" >/dev/null; then echo "::error::Registry credentials remain in $config" >&2; exit 1; fi
   prune:
-    needs: [latest]
+    needs: [dockerhub-latest]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
@@ -299,13 +483,38 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           KEEP_RELEASES: ${{ env.KEEP_RELEASES }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PUSH_TOKEN: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
         run: |
           set -euo pipefail
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_PUSH_TOKEN" ]; then
+            echo "::error::Docker Hub retention requires DOCKERHUB_USERNAME and DOCKERHUB_PUSH_TOKEN (a Read, Write & Delete Docker Hub PAT). Add the repository secret and rerun the release." >&2
+            exit 1
+          fi
           release_rows=$(gh api --paginate "repos/$REPO/releases?per_page=100" --jq '.[] | [.tag_name, (.id | tostring)] | @tsv')
           all_tags=$(gh api "repos/$REPO/git/matching-refs/tags/v" --paginate --jq '.[].ref | sub("^refs/tags/"; "")' | awk '/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ { print }' | sort -V -r)
           retained=$(printf '%s\n' "$all_tags" | head -n "$KEEP_RELEASES")
           stale=$(printf '%s\n' "$all_tags" | tail -n +$((KEEP_RELEASES + 1)))
           [ -n "$stale" ] || exit 0
+          hub_token=$(jq -n '{username:env.DOCKERHUB_USERNAME,password:env.DOCKERHUB_PUSH_TOKEN}' \
+            | curl --silent --show-error --fail-with-body -X POST https://hub.docker.com/v2/users/login/ \
+                -H 'Content-Type: application/json' --data-binary @- \
+            | jq -er '.token') || { echo "::error::Docker Hub API login failed; verify DOCKERHUB_PUSH_TOKEN Read, Write & Delete access." >&2; exit 1; }
+          echo "::add-mask::$hub_token"
+          auth_header_file=$(mktemp "$RUNNER_TEMP/dockerhub-auth-header.XXXXXX")
+          chmod 600 "$auth_header_file"
+          trap 'rm -f "$auth_header_file"' EXIT
+          printf 'Authorization: JWT %s\n' "$hub_token" > "$auth_header_file"
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            code=$(curl --silent --show-error -o "$RUNNER_TEMP/dockerhub-delete-response" -w '%{http_code}' \
+              -X DELETE "https://hub.docker.com/v2/repositories/$DOCKERHUB_USERNAME/rcas/tags/$tag" \
+              -H "@$auth_header_file") || { echo "::error::Docker Hub tag deletion request failed for $tag; retaining all releases and tags." >&2; exit 1; }
+            case "$code" in
+              204|404) echo "Deleted or already absent Docker Hub tag $tag" ;;
+              *) echo "::error::Docker Hub refused deletion of stale tag $tag (HTTP $code); DOCKERHUB_PUSH_TOKEN needs Read, Write & Delete scope. Retaining releases and tags." >&2; exit 1 ;;
+            esac
+          done <<< "$stale"
           versions="$RUNNER_TEMP/package-versions.json"
           if ! gh api --paginate --slurp "user/packages/container/rcas/versions?per_page=100" > "$versions" 2>"$RUNNER_TEMP/package-error"; then
             cat "$RUNNER_TEMP/package-error" >&2

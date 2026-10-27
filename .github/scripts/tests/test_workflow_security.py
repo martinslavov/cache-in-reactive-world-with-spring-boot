@@ -113,24 +113,20 @@ class WorkflowSecurityTest(unittest.TestCase):
             r"(?ms)^  workflow_call:\n(?P<section>.*?)(?=^  workflow_dispatch:)", called
         )
         self.assertIsNotNone(workflow_call)
-        declared_secrets = re.search(
-            r"(?ms)^    secrets:\n(?P<section>(?:^      [A-Z][A-Z0-9_]*:\n        required: (?:true|false)\n)+)",
-            workflow_call.group("section"),
-        )
-        self.assertIsNotNone(declared_secrets)
-        declarations = {
-            name: required == "true"
+        declarations = dict(
+            (name, required == "true")
             for name, required in re.findall(
                 r"(?m)^      ([A-Z][A-Z0-9_]*):\n        required: (true|false)$",
-                declared_secrets.group("section"),
+                workflow_call.group("section"),
             )
-        }
+        )
         self.assertTrue(forwarded_secrets)
         for caller_name, secret_name in forwarded_secrets:
             with self.subTest(secret=secret_name):
                 self.assertEqual(caller_name, secret_name)
                 self.assertIn(secret_name, declarations)
-                self.assertTrue(declarations[secret_name])
+                self.assertEqual(declarations[secret_name], secret_name != "DOCKERHUB_PUSH_TOKEN")
+        self.assertIn("DOCKERHUB_PUSH_TOKEN", dict(forwarded_secrets).values())
 
     def test_release_builds_tag_and_prunes_with_job_scoped_write_permissions(self):
         text = (ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8")
@@ -172,9 +168,11 @@ class WorkflowSecurityTest(unittest.TestCase):
         text = (ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8")
         jobs = _jobs(text)
         self.assertIn("needs: [resolve, build]", jobs["publish"])
-        self.assertIn("needs: [resolve, build, publish]", jobs["release"])
+        self.assertIn("needs: [resolve, build, publish, dockerhub]", jobs["release"])
         self.assertIn("needs: [release]", jobs["latest"])
-        self.assertIn("needs: [latest]", jobs["prune"])
+        self.assertIn("needs: [resolve, publish]", jobs["dockerhub"])
+        self.assertIn("needs: [resolve, latest]", jobs["dockerhub-latest"])
+        self.assertIn("needs: [dockerhub-latest]", jobs["prune"])
         self.assertIn("packages: write", jobs["publish"])
         self.assertNotIn("contents: write", jobs["publish"])
         self.assertIn("contents: write", jobs["release"])
@@ -182,11 +180,31 @@ class WorkflowSecurityTest(unittest.TestCase):
         self.assertIn("packages: write", jobs["latest"])
         self.assertIn("packages: write", jobs["prune"])
         self.assertIn("secrets.DOCKERHUB_USERNAME", jobs["publish"])
-        self.assertNotIn("secrets.DOCKERHUB_USERNAME", text.split("  release:\n", 1)[1])
+        self.assertIn("secrets.DOCKERHUB_TOKEN", jobs["publish"])
+        self.assertNotIn("DOCKERHUB_PUSH_TOKEN", jobs["publish"])
+        for job_name in ("resolve", "build", "release", "latest"):
+            self.assertNotIn("DOCKERHUB_PUSH_TOKEN", jobs[job_name])
+        self.assertNotIn("DOCKERHUB_TOKEN", jobs["dockerhub"])
+        self.assertNotIn("DOCKERHUB_TOKEN", jobs["dockerhub-latest"])
+        for job_name in ("dockerhub", "dockerhub-latest", "prune"):
+            with self.subTest(job=job_name):
+                self.assertIn("secrets.DOCKERHUB_USERNAME", jobs[job_name])
+                self.assertIn("secrets.DOCKERHUB_PUSH_TOKEN", jobs[job_name])
+                self.assertNotIn("secrets.DOCKERHUB_PUSH_TOKEN", jobs[job_name].split("    steps:", 1)[0])
         self.assertIn("docker logout ghcr.io", jobs["publish"])
         self.assertIn("docker logout dhi.io", jobs["publish"])
         self.assertIn("if: always()", jobs["publish"])
         self.assertIn("Verify no registry credentials remain", jobs["publish"])
+        for job_name in ("dockerhub", "dockerhub-latest"):
+            self.assertIn("docker logout docker.io", jobs[job_name])
+            self.assertIn("docker logout ghcr.io", jobs[job_name])
+            self.assertIn("if: always()", jobs[job_name])
+            self.assertIn("Verify no registry credentials remain", jobs[job_name])
+            self.assertIn('has("docker.io")', jobs[job_name])
+            self.assertIn('has("https://index.docker.io/v1/")', jobs[job_name])
+            self.assertIn('has("ghcr.io")', jobs[job_name])
+            self.assertLess(jobs[job_name].index("docker logout docker.io"),
+                            jobs[job_name].index("Verify no registry credentials remain"))
         self.assertIn("docker logout ghcr.io", jobs["latest"])
         self.assertIn("Verify no GHCR credentials remain", jobs["latest"])
         self.assertIn("workflow_dispatch", text.split("jobs:", 1)[0])
@@ -216,7 +234,7 @@ class WorkflowSecurityTest(unittest.TestCase):
         self.assertIn("awk -F '\\t' -v tag=\"$tag\"", prune)
 
     def test_mutating_release_jobs_share_one_global_job_level_queue(self):
-        critical = {"ci-tag.yml": ("tag",), "ci-release.yml": ("publish", "release", "latest", "prune")}
+        critical = {"ci-tag.yml": ("tag",), "ci-release.yml": ("publish", "dockerhub", "release", "latest", "dockerhub-latest", "prune")}
         for workflow, job_names in critical.items():
             text = (ROOT / "workflows" / workflow).read_text(encoding="utf-8")
             with self.subTest(workflow=workflow):
@@ -232,6 +250,7 @@ class WorkflowSecurityTest(unittest.TestCase):
         self.assertIn("packages: write", caller)
         self.assertIn("DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}", caller)
         self.assertIn("DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}", caller)
+        self.assertIn("DOCKERHUB_PUSH_TOKEN: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}", caller)
 
     def test_tag_write_job_is_separated_from_the_read_only_plan_job(self):
         jobs = _jobs((ROOT / "workflows" / "ci-tag.yml").read_text(encoding="utf-8"))

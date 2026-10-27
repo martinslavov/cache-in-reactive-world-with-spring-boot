@@ -78,13 +78,15 @@ The `dev` profile connects to PostgreSQL on `127.0.0.1:5432` (`testdb`, user and
 
 ## Published release images
 
-Each stable release publishes `ghcr.io/martinslavov/rcas:vX.Y.Z` from that tag. `latest` aliases the greatest stable SemVer release (numeric ordering), so rerunning an older release never moves it backwards. The workflow retains images for the newest two stable releases; older image versions are deleted before their GitHub releases and tags. Historical releases can be backfilled by running **CI Release** with `workflow_dispatch` and an existing strict `vX.Y.Z` tag.
+Each stable release publishes the same multi-architecture image digest to `ghcr.io/martinslavov/rcas:vX.Y.Z` and `docker.io/martinslavov/rcas:vX.Y.Z`. Both registries' `latest` aliases point to the greatest stable SemVer release (numeric ordering), so rerunning an older release never moves either alias backwards. The release notes begin with both pull commands, the shared digest and links to both package pages. The workflow retains images for the newest two stable releases; older Docker Hub tags and GHCR image versions are deleted before their GitHub releases and Git tags. Historical releases can be backfilled by running **CI Release** with `workflow_dispatch` and an existing strict `vX.Y.Z` tag. After Docker Hub publishing is configured, backfill `v0.1.0` and `v0.1.1` to publish the historical images and update their release notes.
 
 For example, start PostgreSQL and Redis from the Compose configuration, then run a published image on its network:
 
 ```bash
 docker compose up -d
 docker pull ghcr.io/martinslavov/rcas:v0.1.0
+# Or use the matching Docker Hub image:
+docker pull docker.io/martinslavov/rcas:v0.1.0
 docker run --rm --name rcas --network rcas-docker-network -p 8080:8080 \
   -e SPRING_PROFILES_ACTIVE=dev \
   -e SPRING_R2DBC_URL=r2dbc:postgresql://postgres:5432/testdb \
@@ -93,7 +95,7 @@ docker run --rm --name rcas --network rcas-docker-network -p 8080:8080 \
   ghcr.io/martinslavov/rcas:v0.1.0
 ```
 
-Then visit <http://localhost:8080/app/actuator/health>. `docker pull ghcr.io/martinslavov/rcas:latest` selects the newest stable release. The GHCR package may initially be private: the repository owner must make it public once in the package settings for anonymous pulls to work. Release publication links the package to this repository through its OCI source label.
+Then visit <http://localhost:8080/app/actuator/health>. `docker pull ghcr.io/martinslavov/rcas:latest` or `docker pull docker.io/martinslavov/rcas:latest` selects the newest stable release. The GHCR package and Docker Hub repository may initially be private: the owner must make each public in its registry settings for anonymous pulls. Release publication links the GHCR package to this repository through its OCI source label.
 
 ## Docker services
 
@@ -206,11 +208,11 @@ Workflows live in `.github/workflows`:
 | `ci-dependency-review.yml` (CI Dependency Review) | pull request | `dependency-review` job: fails the PR when it adds dependencies with known high or critical vulnerabilities |
 | `ci-secret-scan.yml` (CI Secret Scan) | pull request, push to `main` | `secret-scan` job: gitleaks over the full history (`.gitleaks.toml`, allowlist entries need a documented reason) |
 | `ci-tag.yml` (CI Tag) | merged PR into `main`; push fallback for fork PRs | Plans the tag in a read-only job from the `major` / `enhancement` labels, creates it in a minimal write job without checkout, then calls CI Release |
-| `ci-release.yml` (CI Release) | push of a tag `v*`, reusable workflow call, manual backfill | Builds/tests the selected tag, publishes or verifies its GHCR image before release creation, updates release notes with the image digest, advances `latest` to the highest stable SemVer, and prunes images before the two-release retention cleanup |
+| `ci-release.yml` (CI Release) | push of a tag `v*`, reusable workflow call, manual backfill | Builds/tests the selected tag, publishes or verifies the same image digest in GHCR and Docker Hub before release creation, puts both pull commands and links at the top of release notes, advances both `latest` aliases to the highest stable SemVer, and prunes images before the two-release retention cleanup |
 | `ci-code-review.yml` (CodeQL) | pull request and push to `main`, weekly | Static security analysis, results appear in the Security tab |
 | `ci-pr-issue-tracking.yml` (PR Issue Tracking) | pull request opened | Creates one tracking issue per PR (found again by a hidden marker, so it is never duplicated) and links it in a PR comment |
 
-Releases are created automatically for merged PRs into `main`: add the `major` label for a major bump or `enhancement` for a minor bump; otherwise the version receives a patch bump. The first automatic release is `v0.1.0`. A commit already carrying a stable `vX.Y.Z` tag is not tagged again. Fork PR merges are handled by a `main` push fallback that verifies the commit belongs to a merged PR from a fork. The mutating jobs (CI Tag `tag` and CI Release `publish`, `release`, `latest` and `prune`) share one job-level concurrency group `release-tag` with `queue: max` and no cancellation, so automatic releases, image publication, latest alias movement and cleanup are serialized in one FIFO queue (pending jobs not replaced), and tag-reference creation retries against the latest tags to avoid losing a merge when concurrent releases choose the same next version. Manual `v*` tag pushes still create releases and apply the two-release retention policy. The **CI Release** `workflow_dispatch` input is restricted by workflow validation to an existing strict stable `vX.Y.Z` tag for backfills. Retention and `latest` selection consider stable versions in numeric SemVer order:
+Releases are created automatically for merged PRs into `main`: add the `major` label for a major bump or `enhancement` for a minor bump; otherwise the version receives a patch bump. The first automatic release is `v0.1.0`. A commit already carrying a stable `vX.Y.Z` tag is not tagged again. Fork PR merges are handled by a `main` push fallback that verifies the commit belongs to a merged PR from a fork. The mutating jobs (CI Tag `tag` and CI Release `publish`, `dockerhub`, `release`, `latest`, `dockerhub-latest` and `prune`) share one job-level concurrency group `release-tag` with `queue: max` and no cancellation, so automatic releases, image publication, latest alias movement and cleanup are serialized in one FIFO queue (pending jobs not replaced), and tag-reference creation retries against the latest tags to avoid losing a merge when concurrent releases choose the same next version. Manual `v*` tag pushes still create releases and apply the two-release retention policy. The **CI Release** `workflow_dispatch` input is restricted by workflow validation to an existing strict stable `vX.Y.Z` tag for backfills. Retention and `latest` selection consider stable versions in numeric SemVer order:
 
 ```bash
 git tag v1.0.0
@@ -222,12 +224,12 @@ Recommended repository settings:
 - Settings → Actions → General → Workflow permissions: allow workflows to create issues and pull request comments (the PR Issue Tracking workflow also declares its permissions in the YAML).
 - Branch protection / rulesets for `main`: `Main protection` currently requires `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review`, `secret-scan` and `PR Review`. `PR Review` must succeed on the current head SHA before QA or merge. **No agent may merge unless every ruleset-required check and all agent statuses (`PR Review`, `QA Agent`, `Definition of Done`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge). `Definition of Done` is validated after QA and joins the ruleset after it has reported once.
 - Security: secret scanning, push protection, Dependabot alerts and security updates enabled. The `Branch naming` ruleset excludes `dependabot/**` so Dependabot can create its branches.
-- Repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a read-only Docker Hub access token): the Dockerfile uses Docker Hardened Images (`dhi.io`), which need a login to pull. Used by CI Component Tests and CI Sanity Tests; the login is skipped when the secrets are unavailable (fork PRs).
+- Repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (read-only): used for Docker Hardened Images (`dhi.io`) pulls by CI Component Tests, CI Sanity Tests and the release image build. Add a separate `DOCKERHUB_PUSH_TOKEN` Docker Hub PAT with Read, Write & Delete permissions for release publication, `latest` and retention pruning; the workflow fails with an actionable error if it is missing. The owner must make the GHCR package and Docker Hub repository public for anonymous pulls, then manually backfill `v0.1.0` and `v0.1.1` through CI Release.
 - Code scanning must be available for the repository to see the CodeQL results.
 
 PRs from forks get a read-only token, so PR Issue Tracking cannot create issues for them.
 
-See [Security and permissions](.github/docs/security.md) for per-workflow permissions, SHA pinning and Dependabot, fork PR behaviour, token scopes (`PROJECT_TOKEN`, `DOCKERHUB_*`) and per-agent permissions.
+See [Security and permissions](.github/docs/security.md) for per-workflow permissions, SHA pinning and Dependabot, fork PR behaviour, token scopes (`PROJECT_TOKEN`, read-only `DOCKERHUB_TOKEN`, and write/delete `DOCKERHUB_PUSH_TOKEN`) and per-agent permissions.
 
 ## Branch workflow
 

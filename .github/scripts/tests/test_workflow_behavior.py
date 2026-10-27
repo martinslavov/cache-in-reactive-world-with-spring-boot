@@ -286,7 +286,38 @@ MOCK_DOCKER = textwrap.dedent(
     state = json.load(open(path, encoding="utf-8"))
     args = sys.argv[1:]
     state.setdefault("docker", []).append(args)
-    if args[:1] == ["build"]:
+    if args[:1] == ["login"]:
+        if state.get("fail_hub_login"):
+            print("unauthorized: invalid token", file=sys.stderr)
+            json.dump(state, open(path, "w", encoding="utf-8"))
+            sys.exit(1)
+    elif args[:2] == ["buildx", "imagetools"]:
+        operation = args[2]
+        if operation == "inspect":
+            image = args[3]
+            if image.startswith("ghcr.io/"):
+                digest = state.get("ghcr_digests", {}).get(
+                    image, state.get("ghcr_digest", "sha256:" + "a" * 64)
+                )
+            else:
+                digest = state.get("hub_images", {}).get(image)
+            if digest is None:
+                print("manifest unknown", file=sys.stderr)
+                json.dump(state, open(path, "w", encoding="utf-8"))
+                sys.exit(1)
+            print(digest)
+        elif operation == "create":
+            image = args[args.index("--tag") + 1]
+            source = args[-1]
+            digest = source.rsplit("@", 1)[1] if "@" in source else state.get("ghcr_digest", "sha256:" + "a" * 64)
+            if state.get("fail_hub_push"):
+                print(state.get("hub_push_error", "denied: requested access to resource is denied"), file=sys.stderr)
+                json.dump(state, open(path, "w", encoding="utf-8"))
+                sys.exit(1)
+            state.setdefault("hub_images", {})[image] = state.get("hub_created_digest", digest)
+        else:
+            sys.exit("unexpected imagetools operation: " + operation)
+    elif args[:1] == ["build"]:
         if state.get("fail_build"):
             json.dump(state, open(path, "w", encoding="utf-8")); print("build denied", file=sys.stderr); sys.exit(1)
         build_args = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == "--build-arg"]
@@ -310,16 +341,56 @@ MOCK_DOCKER = textwrap.dedent(
 )
 
 
+MOCK_CURL = textwrap.dedent(
+    """\
+    #!/usr/bin/env python3
+    import json, os, sys
+    path = os.environ["GH_MOCK_STATE"]
+    state = json.load(open(path, encoding="utf-8"))
+    args = sys.argv[1:]
+    method = args[args.index("-X") + 1] if "-X" in args else "GET"
+    url = next((arg for arg in args if arg.startswith("https://")), "")
+    state.setdefault("curl_calls", []).append([method, url, args])
+    headers = []
+    for index, arg in enumerate(args[:-1]):
+        if arg in ("-H", "--header"):
+            header = args[index + 1]
+            if header.startswith("@"):
+                header = open(header[1:], encoding="utf-8").read().rstrip("\\n")
+            headers.append(header)
+    state.setdefault("curl_headers", []).append([method, url, headers])
+    if method == "POST":
+        if state.get("fail_hub_login"):
+            json.dump(state, open(path, "w", encoding="utf-8"))
+            print("401 invalid Docker Hub token", file=sys.stderr)
+            sys.exit(22)
+        sys.stdout.write('{"token":"mock-jwt-token"}')
+    elif method == "DELETE":
+        tag = url.rsplit("/", 1)[1]
+        code = str(state.get("hub_delete_codes", {}).get(tag, 204))
+        state.setdefault("calls", []).append(["delete-hub-tag", tag, int(code)])
+        if "-o" in args:
+            open(args[args.index("-o") + 1], "w", encoding="utf-8").write("")
+        if "-w" in args:
+            sys.stdout.write(code)
+    else:
+        sys.exit("unexpected curl method: " + method)
+    json.dump(state, open(path, "w", encoding="utf-8"))
+    """
+)
+
+
 class WorkflowMock:
     def __init__(self, test, **state):
         self.temp = tempfile.TemporaryDirectory()
         test.addCleanup(self.temp.cleanup)
         self.path = pathlib.Path(self.temp.name)
-        for name, body in (("gh", MOCK_RELEASE_GH), ("docker", MOCK_DOCKER)):
+        for name, body in (("gh", MOCK_RELEASE_GH), ("docker", MOCK_DOCKER), ("curl", MOCK_CURL)):
             command = self.path / name
             command.write_text(body, encoding="utf-8")
             command.chmod(0o755)
-        defaults = {"releases": {}, "release_tags": [], "refs": {}, "packages": [], "calls": []}
+        defaults = {"releases": {}, "release_tags": [], "refs": {}, "packages": [], "calls": [],
+                    "hub_images": {}, "docker": []}
         defaults.update(state)
         if "image_revision" in defaults:
             defaults["image_labels"] = {
@@ -352,6 +423,7 @@ class WorkflowMock:
             "REPO": "test/repo",
             "TAG": "v0.1.0",
             "IMAGE": "ghcr.io/test/repo:v0.1.0",
+            "DOCKERHUB_USERNAME": "test",
             "DIGEST": "sha256:" + "a" * 64,
             "KEEP_RELEASES": "2",
         } | env
@@ -391,12 +463,35 @@ class ReleaseStepBehaviorTest(unittest.TestCase):
         result = gh.run(self.script)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         release = gh.state()["releases"]["v0.1.0"]
-        self.assertIn("ghcr.io/test/repo:v0.1.0", release["body"])
+        self.assertTrue(release["body"].startswith("<!-- rcas-docker-image:start -->"))
+        self.assertIn("docker pull ghcr.io/test/repo:v0.1.0", release["body"])
+        self.assertIn("docker pull docker.io/test/rcas:v0.1.0", release["body"])
+        self.assertIn("https://github.com/test/repo/pkgs/container/rcas", release["body"])
+        self.assertIn("https://hub.docker.com/r/test/rcas", release["body"])
         self.assertIn("sha256:" + "a" * 64, release["body"])
         self.assertEqual(release["assets"], ["build/libs/rcas-0.0.1.jar"])
 
+    def test_release_notes_use_docker_hub_username_namespace_not_github_owner(self):
+        for existing in ({}, {"v0.1.0": {"id": 7, "body": "Notes", "assets": ["original.jar"]}}):
+            with self.subTest(existing=bool(existing)):
+                gh = WorkflowMock(self, releases=existing)
+                result = gh.run(self.script, DOCKERHUB_USERNAME="hubuser")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                body = gh.state()["releases"]["v0.1.0"]["body"]
+                self.assertIn("docker pull docker.io/hubuser/rcas:v0.1.0", body)
+                self.assertIn("https://hub.docker.com/r/hubuser/rcas", body)
+                self.assertNotIn("docker.io/test/", body)
+                self.assertNotIn("hub.docker.com/r/test/", body)
+
+    def test_release_notes_require_docker_hub_username(self):
+        gh = WorkflowMock(self)
+        result = gh.run(self.script, DOCKERHUB_USERNAME="")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("DOCKERHUB_USERNAME", result.stderr)
+        self.assertEqual(gh.state()["releases"], {})
+
     def test_existing_release_notes_are_updated_idempotently_without_changing_assets(self):
-        original = {"id": 7, "body": "Original release notes", "assets": ["original.jar"]}
+        original = {"id": 7, "body": "Original release notes\n\n<!-- rcas-image-reference -->\n\nContainer image: legacy", "assets": ["original.jar"]}
         gh = WorkflowMock(self, releases={"v0.1.0": original})
         for _ in range(2):
             result = gh.run(self.script)
@@ -404,8 +499,45 @@ class ReleaseStepBehaviorTest(unittest.TestCase):
         release = gh.state()["releases"]["v0.1.0"]
         self.assertEqual(release["assets"], ["original.jar"])
         self.assertIn("Original release notes", release["body"])
-        self.assertEqual(release["body"].count("<!-- rcas-image-reference -->"), 1)
+        self.assertTrue(release["body"].startswith("<!-- rcas-docker-image:start -->"))
+        self.assertEqual(release["body"].count("<!-- rcas-docker-image:start -->"), 1)
+        self.assertEqual(release["body"].count("<!-- rcas-docker-image:end -->"), 1)
+        self.assertNotIn("rcas-image-reference", release["body"])
         self.assertEqual(len([c for c in gh.state()["calls"] if c[0] == "patch-release"]), 2)
+
+    def test_rerunning_release_notes_yields_byte_identical_notes_with_section_on_top(self):
+        section = textwrap.dedent(f"""\
+            <!-- rcas-docker-image:start -->
+            ## Docker image
+
+            ```bash
+            docker pull ghcr.io/test/repo:v0.1.0
+            docker pull docker.io/test/rcas:v0.1.0
+            ```
+
+            Digest: `sha256:{"a" * 64}`
+
+            [GitHub Container Registry](https://github.com/test/repo/pkgs/container/rcas) · [Docker Hub](https://hub.docker.com/r/test/rcas)
+            <!-- rcas-docker-image:end -->""")
+        legacy = {"id": 7, "assets": ["original.jar"],
+                  "body": "Original release notes\n\n<!-- rcas-image-reference -->\n\nContainer image: legacy\n"}
+        cases = {
+            "existing release with legacy bottom block": ({"v0.1.0": legacy}, "Original release notes"),
+            "fresh release": ({}, "Generated release notes"),
+        }
+        for case, (releases, original_notes) in cases.items():
+            with self.subTest(case=case):
+                gh = WorkflowMock(self, releases=releases)
+                bodies = []
+                for _ in range(2):
+                    result = gh.run(self.script)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    bodies.append(gh.state()["releases"]["v0.1.0"]["body"])
+                self.assertEqual(bodies[0].encode("utf-8"), bodies[1].encode("utf-8"))
+                self.assertEqual(bodies[1], f"{section}\n\n{original_notes}\n")
+                self.assertEqual(bodies[1].count("## Docker image"), 1)
+                self.assertNotIn("rcas-image-reference", bodies[1])
+                self.assertNotIn("Container image: legacy", bodies[1])
 
 
 class PublishImageBehaviorTest(unittest.TestCase):
@@ -462,6 +594,180 @@ class PublishImageBehaviorTest(unittest.TestCase):
         self.assertIn("build denied", result.stderr)
         self.assertFalse(any(call[0] == "push" for call in gh.state()["docker"]))
         self.assertNotIn("digest=", gh.output.read_text(encoding="utf-8"))
+
+
+class DockerHubImageBehaviorTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.script = _step("ci-release.yml", "Copy or verify Docker Hub release image", job="dockerhub")
+        cls.required_secret_step = _step("ci-release.yml", "Require Docker Hub push credentials", job="dockerhub")
+        cls.login_step = _step("ci-release.yml", "Log in to Docker Hub", job="dockerhub")
+
+    def publish(self, gh, **env):
+        return gh.run(self.script, DOCKERHUB_USERNAME="test", TAG="v0.1.0",
+                      DIGEST="sha256:" + "a" * 64, REPO="test/repo", **env)
+
+    def test_copies_manifest_by_ghcr_digest_and_verifies_hub_digest(self):
+        gh = WorkflowMock(self)
+        result = self.publish(gh)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = gh.state()["docker"]
+        self.assertIn(["buildx", "imagetools", "create", "--tag", "docker.io/test/rcas:v0.1.0",
+                       "ghcr.io/test/repo@sha256:" + "a" * 64], commands)
+        self.assertEqual(gh.state()["hub_images"]["docker.io/test/rcas:v0.1.0"], "sha256:" + "a" * 64)
+        self.assertFalse(any(command[0] == "build" for command in commands))
+
+    def test_same_digest_is_noop_and_different_digest_refuses_overwrite(self):
+        image = "docker.io/test/rcas:v0.1.0"
+        matching = WorkflowMock(self, hub_images={image: "sha256:" + "a" * 64})
+        result = self.publish(matching)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(any(command[2:3] == ["create"] for command in matching.state()["docker"]))
+
+        mismatch = WorkflowMock(self, hub_images={image: "sha256:" + "b" * 64})
+        result = self.publish(mismatch)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Refusing to overwrite", result.stderr)
+        self.assertFalse(any("create" in command for command in mismatch.state()["docker"]))
+
+    def test_digest_mismatch_and_denied_push_fail_visibly(self):
+        mismatch = WorkflowMock(self, hub_created_digest="sha256:" + "b" * 64)
+        result = self.publish(mismatch)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Docker Hub digest mismatch", result.stderr)
+
+        denied = WorkflowMock(self, fail_hub_push=True)
+        result = self.publish(denied)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("DOCKERHUB_PUSH_TOKEN must have Read and Write scope", result.stderr)
+
+    def test_missing_push_token_has_actionable_error(self):
+        gh = WorkflowMock(self)
+        result = gh.run(self.required_secret_step, DOCKERHUB_USERNAME="test", DOCKERHUB_PUSH_TOKEN="")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Add the repository secret", result.stderr)
+        self.assertIn("DOCKERHUB_PUSH_TOKEN", result.stderr)
+
+    def test_denied_docker_hub_login_reports_required_pat_scope_without_argv_secret(self):
+        gh = WorkflowMock(self, fail_hub_login=True)
+        result = gh.run(self.login_step, DOCKERHUB_USERNAME="test", DOCKERHUB_PUSH_TOKEN="mock-secret")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Read and Write access", result.stderr)
+        self.assertIn("Delete for retention", result.stderr)
+        docker_calls = gh.state()["docker"]
+        self.assertEqual(len(docker_calls), 1)
+        self.assertNotIn("mock-secret", docker_calls[0])
+
+
+# Fake docker CLI that stores credentials in $DOCKER_CONFIG/config.json like `docker login`/`docker logout`;
+# docker.io is normalised to the index server key. DOCKER_LOGOUT_BROKEN simulates a logout that leaves credentials.
+MOCK_DOCKER_CONFIG = textwrap.dedent(
+    """\
+    #!/usr/bin/env python3
+    import json, os, pathlib, sys
+    config = pathlib.Path(os.environ["DOCKER_CONFIG"]) / "config.json"
+    data = json.loads(config.read_text(encoding="utf-8")) if config.exists() else {}
+    args = sys.argv[1:]
+    def key(registry): return "https://index.docker.io/v1/" if registry == "docker.io" else registry
+    if args[:1] == ["login"]:
+        sys.stdin.read()
+        data.setdefault("auths", {})[key(args[1])] = {"auth": "bW9jazptb2Nr"}
+    elif args[:1] == ["logout"]:
+        if not os.environ.get("DOCKER_LOGOUT_BROKEN"):
+            data.get("auths", {}).pop(key(args[1]), None)
+    else:
+        sys.exit("unexpected docker invocation: " + repr(args))
+    config.write_text(json.dumps(data), encoding="utf-8")
+    """
+)
+
+
+def _job_steps(job, prefix):
+    text = _jobs((ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8"))[job]
+    return [s for s in _steps(text) if s.startswith(f"name: {prefix}")]
+
+
+def _inline_run(step):
+    return next(line.split("run: ", 1)[1] for line in step.splitlines() if line.startswith("        run: "))
+
+
+class DockerHubCredentialCleanupBehaviorTest(unittest.TestCase):
+    JOBS = ("dockerhub", "dockerhub-latest")
+    RESIDUAL_KEYS = ("https://index.docker.io/v1/", "docker.io", "ghcr.io")
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.path = pathlib.Path(temp.name)
+        self.bin = self.path / "bin"
+        self.bin.mkdir()
+        docker = self.bin / "docker"
+        docker.write_text(MOCK_DOCKER_CONFIG, encoding="utf-8")
+        docker.chmod(0o755)
+
+    def config_dir(self, name, config=None):
+        directory = self.path / name
+        directory.mkdir()
+        if config is not None:
+            (directory / "config.json").write_text(json.dumps(config), encoding="utf-8")
+        return directory
+
+    def run_script(self, script, docker_config, **env):
+        environment = os.environ | {"PATH": f"{self.bin}:{os.environ['PATH']}", "DOCKER_CONFIG": str(docker_config),
+                                    "RUNNER_TEMP": str(self.path), "DOCKERHUB_USERNAME": "test",
+                                    "DOCKERHUB_PUSH_TOKEN": "mock-secret"} | env
+        return subprocess.run(["bash", "-c", script], check=False, capture_output=True, text=True, env=environment)
+
+    def residue_check(self, job):
+        return _run_script(_job_steps(job, "Verify no registry credentials remain")[0])
+
+    def auths(self, docker_config):
+        return json.loads((docker_config / "config.json").read_text(encoding="utf-8"))["auths"]
+
+    def login_and_logout(self, job, docker_config, **env):
+        login = _run_script(_job_steps(job, "Log in to Docker Hub")[0])
+        self.assertEqual(self.run_script(login, docker_config).returncode, 0)
+        self.assertIn("https://index.docker.io/v1/", self.auths(docker_config))
+        logouts = [_inline_run(step) for step in _job_steps(job, "Log out of")]
+        self.assertEqual(logouts, ["docker logout docker.io", "docker logout ghcr.io"])
+        for command in logouts:
+            self.assertEqual(self.run_script(command, docker_config, **env).returncode, 0)
+        return self.run_script(self.residue_check(job), docker_config)
+
+    def test_logout_steps_remove_docker_hub_and_ghcr_credentials_and_check_passes(self):
+        for job in self.JOBS:
+            with self.subTest(job=job):
+                docker_config = self.config_dir(job, {"auths": {"ghcr.io": {"auth": "Z2g6Z2g="},
+                                                                "registry.example": {"auth": "eDp4"}}})
+                result = self.login_and_logout(job, docker_config)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.auths(docker_config), {"registry.example": {"auth": "eDp4"}})
+
+    def test_check_fails_when_logout_leaves_credentials_behind(self):
+        for job in self.JOBS:
+            with self.subTest(job=job):
+                docker_config = self.config_dir(job, {"auths": {"ghcr.io": {"auth": "Z2g6Z2g="}}})
+                result = self.login_and_logout(job, docker_config, DOCKER_LOGOUT_BROKEN="1")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Registry credentials remain", result.stderr)
+
+    def test_check_fails_for_each_residual_docker_io_or_ghcr_credential(self):
+        for job in self.JOBS:
+            for section in ("auths", "credHelpers"):
+                for registry in self.RESIDUAL_KEYS:
+                    with self.subTest(job=job, section=section, registry=registry):
+                        name = f"{job}-{section}-{registry}".replace("/", "_").replace(":", "_")
+                        docker_config = self.config_dir(name, {section: {registry: {}}})
+                        result = self.run_script(self.residue_check(job), docker_config)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("Registry credentials remain", result.stderr)
+
+    def test_check_passes_without_config_or_with_only_unrelated_registries(self):
+        for job in self.JOBS:
+            for name, config in (("missing", None), ("unrelated", {"auths": {"registry.example": {}}})):
+                with self.subTest(job=job, config=name):
+                    result = self.run_script(self.residue_check(job), self.config_dir(f"{job}-{name}", config))
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 class ResolveTagBehaviorTest(unittest.TestCase):
@@ -546,15 +852,23 @@ class DocumentationBehaviorTest(unittest.TestCase):
         readme = (ROOT.parent / "README.md").read_text(encoding="utf-8")
         for evidence in (
             "ghcr.io/martinslavov/rcas:vX.Y.Z",
+            "docker.io/martinslavov/rcas:vX.Y.Z",
             "latest",
             "newest two stable releases",
             "workflow_dispatch",
+            "DOCKERHUB_PUSH_TOKEN",
+            "Read, Write & Delete",
+            "v0.1.0` and `v0.1.1",
             "SPRING_R2DBC_URL",
             "SPRING_DATA_REDIS_HOST",
             "docker compose up -d",
         ):
             with self.subTest(evidence=evidence):
                 self.assertIn(evidence, readme)
+        security = (ROOT / "docs" / "security.md").read_text(encoding="utf-8")
+        for evidence in ("DOCKERHUB_PUSH_TOKEN", "Read, Write & Delete", "HTTP 204", "Docker image section"):
+            with self.subTest(security=evidence):
+                self.assertIn(evidence, security)
 
 class LatestImageBehaviorTest(unittest.TestCase):
     @classmethod
@@ -570,6 +884,30 @@ class LatestImageBehaviorTest(unittest.TestCase):
             ["tag", "ghcr.io/test/repo:v10.0.0", "ghcr.io/test/repo:latest"],
             ["push", "ghcr.io/test/repo:latest"],
         ])
+
+    def test_dockerhub_latest_only_advances_for_the_highest_stable_release(self):
+        job = "dockerhub-latest"
+        script = _step("ci-release.yml", "Point Docker Hub latest at the highest stable release", job=job)
+        previous_latest = "sha256:" + "b" * 64
+        release_tags = ["v2.9.0", "v2.10.0", "v10.0.0", "v11.0.0-rc.1", "v01.0.0"]
+        older = WorkflowMock(self, release_tags=release_tags,
+                             hub_images={"docker.io/test/rcas:latest": previous_latest})
+        result = older.run(script, TAG="v0.1.0", DOCKERHUB_USERNAME="test")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(any("create" in command for command in older.state().get("docker", [])))
+        self.assertIn("latest untouched", result.stdout)
+        self.assertEqual(older.state()["hub_images"]["docker.io/test/rcas:latest"], previous_latest)
+
+        highest_digest = "sha256:" + "c" * 64
+        newest = WorkflowMock(self, release_tags=release_tags,
+                              ghcr_digests={"ghcr.io/test/repo:v10.0.0": highest_digest})
+        result = newest.run(script, TAG="v10.0.0", DOCKERHUB_USERNAME="test")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(["buildx", "imagetools", "inspect", "ghcr.io/test/repo:v10.0.0",
+                       "--format", "{{.Manifest.Digest}}"], newest.state()["docker"])
+        self.assertIn(["buildx", "imagetools", "create", "--tag", "docker.io/test/rcas:latest",
+                       "ghcr.io/test/repo@" + highest_digest], newest.state()["docker"])
+        self.assertEqual(newest.state()["hub_images"]["docker.io/test/rcas:latest"], highest_digest)
 
 
 class PruneStepBehaviorTest(unittest.TestCase):
@@ -592,27 +930,86 @@ class PruneStepBehaviorTest(unittest.TestCase):
 
     def test_prunes_only_images_for_evicted_tags_before_releases_and_tags(self):
         gh = self.inventory()
-        result = gh.run(self.script)
+        result = gh.run(self.script, DOCKERHUB_USERNAME="test", DOCKERHUB_PUSH_TOKEN="mock-push-token")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         state = gh.state()
         self.assertEqual(set(state["refs"]), {"v2.10.0", "v10.0.0"})
+        deleted_hub_tags = [call[1].rsplit("/", 1)[1] for call in state["curl_calls"] if call[0] == "DELETE"]
+        self.assertEqual(deleted_hub_tags, ["v2.9.0", "v1.0.0"])
         self.assertEqual(set(state["releases"]), {"v2.10.0", "v10.0.0"})
         remaining_ids = {version["id"] for version in state["packages"]}
         self.assertEqual(remaining_ids, {210, 100, 50})
         calls = state["calls"]
         for tag, version_id in (("v1.0.0", 10), ("v2.9.0", 29)):
+            self.assertLess(calls.index(["delete-hub-tag", tag, 204]), calls.index(["delete-image", version_id]))
             self.assertLess(calls.index(["delete-image", version_id]), calls.index(["delete-release", tag]))
         self.assertFalse(any(call[0] == "delete-image" and call[1] == 210 for call in calls))
 
+    def test_dockerhub_secrets_are_not_passed_in_curl_argv(self):
+        gh = self.inventory()
+        result = gh.run(self.script, DOCKERHUB_USERNAME="test", DOCKERHUB_PUSH_TOKEN="mock-push-token")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        state = gh.state()
+        curl_args = [arg for _, _, args in state["curl_calls"] for arg in args]
+        self.assertNotIn("mock-push-token", curl_args)
+        self.assertNotIn("mock-jwt-token", curl_args)
+        delete_headers = [headers for method, _, headers in state["curl_headers"] if method == "DELETE"]
+        self.assertEqual(delete_headers, [["Authorization: JWT mock-jwt-token"]] * 2)
+
+        auth_file_args = [args[index + 1][1:]
+                          for method, _, args in state["curl_calls"] if method == "DELETE"
+                          for index, arg in enumerate(args[:-1])
+                          if arg in ("-H", "--header") and args[index + 1].startswith("@")]
+        self.assertEqual(len(auth_file_args), 2)
+        self.assertTrue(all(not pathlib.Path(path).exists() for path in auth_file_args))
+
     def test_denied_image_deletion_fails_closed_and_keeps_release_and_tag(self):
         gh = self.inventory(deny=True)
-        result = gh.run(self.script)
+        result = gh.run(self.script, DOCKERHUB_USERNAME="test", DOCKERHUB_PUSH_TOKEN="mock-push-token")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("grant package-version deletion access", result.stderr)
         state = gh.state()
         self.assertEqual(len(state["releases"]), 4)
         self.assertEqual(len(state["refs"]), 4)
         self.assertFalse(any(call[0] in ("delete-release", "delete-tag") for call in state["calls"]))
+
+    def test_missing_dockerhub_tag_404_is_accepted(self):
+        gh = self.inventory()
+        gh.state_file.write_text(json.dumps(gh.state() | {"hub_delete_codes": {"v2.9.0": 404}}), encoding="utf-8")
+        result = gh.run(self.script, DOCKERHUB_USERNAME="test", DOCKERHUB_PUSH_TOKEN="mock-push-token")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("already absent Docker Hub tag v2.9.0", result.stdout)
+        calls = gh.state()["calls"]
+        self.assertLess(calls.index(["delete-hub-tag", "v2.9.0", 404]), calls.index(["delete-image", 29]))
+
+    def test_dockerhub_delete_failure_keeps_github_releases_and_tags(self):
+        gh = self.inventory()
+        gh.state_file.write_text(json.dumps(gh.state() | {"hub_delete_codes": {"v1.0.0": 403}}), encoding="utf-8")
+        result = gh.run(self.script, DOCKERHUB_USERNAME="test", DOCKERHUB_PUSH_TOKEN="mock-push-token")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Read, Write & Delete", result.stderr)
+        state = gh.state()
+        self.assertEqual(len(state["releases"]), 4)
+        self.assertEqual(len(state["refs"]), 4)
+        self.assertFalse(any(call[0] in ("delete-release", "delete-tag") for call in state["calls"]))
+
+    def test_dockerhub_api_login_failure_keeps_github_releases_and_tags(self):
+        gh = self.inventory()
+        gh.state_file.write_text(json.dumps(gh.state() | {"fail_hub_login": True}), encoding="utf-8")
+        result = gh.run(self.script, DOCKERHUB_USERNAME="test", DOCKERHUB_PUSH_TOKEN="mock-push-token")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Read, Write & Delete", result.stderr)
+        state = gh.state()
+        self.assertEqual(len(state["releases"]), 4)
+        self.assertEqual(len(state["refs"]), 4)
+        self.assertFalse(any(call[0] in ("delete-release", "delete-tag") for call in state["calls"]))
+
+    def test_missing_push_token_fails_even_when_there_are_no_stale_tags(self):
+        gh = WorkflowMock(self, refs={"v1.0.0": SHA_A}, releases={"v1.0.0": {"id": 1}})
+        result = gh.run(self.script, DOCKERHUB_USERNAME="test", DOCKERHUB_PUSH_TOKEN="")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("DOCKERHUB_PUSH_TOKEN", result.stderr)
 
 
 class ProjectBoardTokenBehaviorTest(unittest.TestCase):
