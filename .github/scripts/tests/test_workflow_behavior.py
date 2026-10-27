@@ -673,5 +673,80 @@ esac
         self.assertIn("-f project=PROJ -f item=ITEM -f field=FIELD -f option=O2", calls[3])
 
 
+TRACKING_HARNESS = """
+const fs = require('fs');
+const calls = [];
+const record = (name) => async (args) => { calls.push({ name, args }); return { data: { body: '' } }; };
+const rest = {
+  issues: {
+    listForRepo: 'listForRepo',
+    listComments: 'listComments',
+    create: async (args) => { calls.push({ name: 'issues.create', args });
+      return { data: { number: 141, html_url: 'https://github.com/martinslavov/rcas/issues/141' } }; },
+    createComment: record('issues.createComment'),
+  },
+  pulls: { get: record('pulls.get'), update: record('pulls.update') },
+};
+const github = { rest, paginate: async () => [] };
+const context = {
+  repo: { owner: 'martinslavov', repo: 'rcas' },
+  payload: { pull_request: { number: 143, title: 'Fix', html_url: 'https://github.com/martinslavov/rcas/pull/143',
+    body: 'desc', user: { login: 'dependabot[bot]' } } },
+};
+const outputs = {};
+const core = { setOutput: (k, v) => { outputs[k] = v; }, info: () => {} };
+const run = new Function('github', 'context', 'core', 'return (async () => {' + fs.readFileSync(process.argv[2], 'utf8') + '})();');
+run(github, context, core).then(() => {
+  console.log(JSON.stringify({ calls, outputs }));
+}).catch((error) => { console.error(error); process.exit(1); });
+"""
+
+
+class TrackingWithoutProjectTokenBehaviorTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        text = _jobs((ROOT / "workflows" / "ci-pr-issue-tracking.yml").read_text(encoding="utf-8"))["create-issue"]
+        steps = _steps(text)
+        cls.tracking = next(s for s in steps if "name: Create or find linked issue" in s)
+        cls.board = _step("ci-pr-issue-tracking.yml", "Add tracking issue to RCAS Tracking board", job="create-issue")
+
+    def github_script(self):
+        body = self.tracking.split("          script: |\n", 1)[1]
+        lines = [line[12:] if line.strip() else "" for line in body.splitlines()]
+        return "\n".join(lines)
+
+    def test_tracking_issue_comment_and_description_use_default_token_and_board_only_warns(self):
+        # The github-script step sets no github-token, so every call below uses github.token, not PROJECT_TOKEN.
+        self.assertNotIn("github-token", self.tracking)
+        self.assertNotIn("PROJECT_TOKEN", self.tracking)
+        with tempfile.TemporaryDirectory() as directory:
+            script = pathlib.Path(directory) / "script.js"
+            script.write_text(self.github_script(), encoding="utf-8")
+            harness = pathlib.Path(directory) / "harness.js"
+            harness.write_text(TRACKING_HARNESS, encoding="utf-8")
+            node = subprocess.run(["node", str(harness), str(script)], check=False, capture_output=True, text=True)
+            self.assertEqual(node.returncode, 0, node.stderr)
+            result = json.loads(node.stdout)
+            names = [call["name"] for call in result["calls"]]
+            self.assertEqual(names, ["issues.create", "issues.createComment", "pulls.get", "pulls.update"])
+            update = result["calls"][-1]["args"]
+            self.assertIn("**Tracking issue:** #141", update["body"])
+            issue_url = result["outputs"]["issue-url"]
+            self.assertEqual(issue_url, "https://github.com/martinslavov/rcas/issues/141")
+
+            gh = pathlib.Path(directory) / "gh"
+            gh.write_text("#!/bin/sh\necho called >> \"$GH_LOG\"\n", encoding="utf-8")
+            gh.chmod(0o755)
+            log = pathlib.Path(directory) / "gh.log"
+            board = subprocess.run(
+                ["/bin/bash", "-c", self.board], check=False, capture_output=True, text=True,
+                env=os.environ | {"PATH": directory + os.pathsep + os.environ["PATH"], "GH_TOKEN": "",
+                                   "GH_LOG": str(log), "GITHUB_REPOSITORY": "martinslavov/rcas",
+                                   "ISSUE_URL": issue_url})
+            self.assertEqual(board.returncode, 0, board.stderr)
+            self.assertIn("::warning::PROJECT_TOKEN is unavailable", board.stdout)
+            self.assertFalse(log.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
