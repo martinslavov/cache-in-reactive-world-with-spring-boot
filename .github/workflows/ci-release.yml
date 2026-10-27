@@ -233,6 +233,9 @@ jobs:
             echo "::error::Docker Hub login was denied. DOCKERHUB_PUSH_TOKEN must be a Docker Hub PAT with Read and Write access (and Delete for retention pruning)." >&2
             exit 1
           fi
+      - name: Require skopeo
+        run: |
+          command -v skopeo >/dev/null || { echo "::error::skopeo is required for the digest-preserving Docker Hub copy but is not installed on this runner" >&2; exit 1; }
       - name: Copy or verify Docker Hub release image
         env:
           REPO: ${{ github.repository }}
@@ -242,12 +245,31 @@ jobs:
         run: |
           set -euo pipefail
           image="docker.io/$DOCKERHUB_USERNAME/rcas:$TAG"
+          source="ghcr.io/$REPO@$DIGEST"
+          manifest="$RUNNER_TEMP/dockerhub-manifest"
+          # Top-level digest of the exact manifest bytes (single manifest or list); written to a file so no byte is stripped.
           inspect_digest() {
-            docker buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}' 2>"$RUNNER_TEMP/dockerhub-inspect-error"
+            skopeo inspect --raw "docker://$1" >"$manifest" 2>"$RUNNER_TEMP/dockerhub-inspect-error" || return 1
+            [ -s "$manifest" ] || return 1
+            shasum -a 256 "$manifest" | awk '{print "sha256:" $1}'
+          }
+          copy_exact() {
+            if ! skopeo copy --all --preserve-digests "docker://$source" "docker://$image" 2>"$RUNNER_TEMP/dockerhub-push-error"; then
+              cat "$RUNNER_TEMP/dockerhub-push-error" >&2
+              if grep -Eiq '401|403|denied|insufficient_scope|unauthorized' "$RUNNER_TEMP/dockerhub-push-error"; then
+                echo "::error::Docker Hub denied image publication; DOCKERHUB_PUSH_TOKEN must have Read and Write scope (and Delete for retention pruning)." >&2
+              fi
+              exit 1
+            fi
+            actual=$(inspect_digest "$image") || { cat "$RUNNER_TEMP/dockerhub-inspect-error" >&2; echo "::error::Unable to verify the Docker Hub image digest after copying" >&2; exit 1; }
+            [ "$actual" = "$DIGEST" ] || { echo "::error::Docker Hub digest mismatch for $image: expected $DIGEST, found $actual" >&2; exit 1; }
           }
           if actual=$(inspect_digest "$image"); then
             if [ "$actual" = "$DIGEST" ]; then
               echo "$image already points to $DIGEST; leaving it unchanged"
+            elif jq -e --arg digest "$DIGEST" '(.mediaType == "application/vnd.docker.distribution.manifest.list.v2+json" or .mediaType == "application/vnd.oci.image.index.v1+json") and (.manifests | length == 1) and .manifests[0].digest == $digest' "$manifest" >/dev/null 2>&1; then
+              echo "$image is a single-child manifest list wrapping $DIGEST; replacing it with an exact copy"
+              copy_exact
             else
               echo "::error::Refusing to overwrite $image: it points to $actual, expected $DIGEST" >&2
               exit 1
@@ -258,20 +280,14 @@ jobs:
               echo "::error::Cannot verify $image on Docker Hub; refusing an unsafe overwrite" >&2
               exit 1
             fi
-            source="ghcr.io/$REPO@$DIGEST"
-            if ! docker buildx imagetools create --tag "$image" "$source" 2>"$RUNNER_TEMP/dockerhub-push-error"; then
-              cat "$RUNNER_TEMP/dockerhub-push-error" >&2
-              if grep -Eiq '401|403|denied|insufficient_scope|unauthorized' "$RUNNER_TEMP/dockerhub-push-error"; then
-                echo "::error::Docker Hub denied image publication; DOCKERHUB_PUSH_TOKEN must have Read and Write scope (and Delete for retention pruning)." >&2
-              fi
-              exit 1
-            fi
-            actual=$(inspect_digest "$image") || { cat "$RUNNER_TEMP/dockerhub-inspect-error" >&2; echo "::error::Unable to verify the Docker Hub image digest after copying" >&2; exit 1; }
-            [ "$actual" = "$DIGEST" ] || { echo "::error::Docker Hub digest mismatch for $image: expected $DIGEST, found $actual" >&2; exit 1; }
+            copy_exact
           fi
       - name: Log out of Docker Hub
         if: always()
-        run: docker logout docker.io
+        run: |
+          docker logout docker.io || true
+          docker logout https://index.docker.io/v1/ || true
+          docker logout || true
       - name: Log out of GitHub Container Registry
         if: always()
         run: docker logout ghcr.io
@@ -431,6 +447,9 @@ jobs:
             echo "::error::Docker Hub login was denied. DOCKERHUB_PUSH_TOKEN must be a Docker Hub PAT with Read and Write access (and Delete for retention pruning)." >&2
             exit 1
           fi
+      - name: Require skopeo
+        run: |
+          command -v skopeo >/dev/null || { echo "::error::skopeo is required for the digest-preserving Docker Hub copy but is not installed on this runner" >&2; exit 1; }
       - name: Point Docker Hub latest at the highest stable release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -445,20 +464,28 @@ jobs:
             echo "Docker Hub latest untouched: $TAG is not the highest stable release ($latest_tag)"
             exit 0
           fi
-          source="ghcr.io/$REPO:$latest_tag"
-          digest=$(docker buildx imagetools inspect "$source" --format '{{.Manifest.Digest}}')
+          manifest="$RUNNER_TEMP/dockerhub-latest-manifest"
+          inspect_digest() {
+            skopeo inspect --raw "docker://$1" >"$manifest" || return 1
+            [ -s "$manifest" ] || return 1
+            shasum -a 256 "$manifest" | awk '{print "sha256:" $1}'
+          }
+          digest=$(inspect_digest "ghcr.io/$REPO:$latest_tag") || { echo "::error::Unable to inspect the GHCR $latest_tag image" >&2; exit 1; }
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::Unable to verify the GHCR latest image digest" >&2; exit 1; }
           image="docker.io/$DOCKERHUB_USERNAME/rcas:latest"
-          if ! docker buildx imagetools create --tag "$image" "ghcr.io/$REPO@$digest" 2>"$RUNNER_TEMP/dockerhub-latest-error"; then
+          if ! skopeo copy --all --preserve-digests "docker://ghcr.io/$REPO@$digest" "docker://$image" 2>"$RUNNER_TEMP/dockerhub-latest-error"; then
             cat "$RUNNER_TEMP/dockerhub-latest-error" >&2
             if grep -Eiq '401|403|denied|insufficient_scope|unauthorized' "$RUNNER_TEMP/dockerhub-latest-error"; then echo "::error::Docker Hub denied latest publication; DOCKERHUB_PUSH_TOKEN must have Read and Write scope (and Delete for retention pruning)." >&2; fi
             exit 1
           fi
-          actual=$(docker buildx imagetools inspect "$image" --format '{{.Manifest.Digest}}')
+          actual=$(inspect_digest "$image") || { echo "::error::Unable to verify the Docker Hub latest digest after copying" >&2; exit 1; }
           [ "$actual" = "$digest" ] || { echo "::error::Docker Hub latest digest mismatch: expected $digest, found $actual" >&2; exit 1; }
       - name: Log out of Docker Hub
         if: always()
-        run: docker logout docker.io
+        run: |
+          docker logout docker.io || true
+          docker logout https://index.docker.io/v1/ || true
+          docker logout || true
       - name: Log out of GitHub Container Registry
         if: always()
         run: docker logout ghcr.io

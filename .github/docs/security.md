@@ -46,8 +46,10 @@ a commit, builds/tests at that immutable commit, and passes only the same-run ja
 The `publish` job receives the read-only Docker Hub token only for its `dhi.io` pull and logs out of `dhi.io` and `ghcr.io`
 on every exit before checking that credentials are absent. It reuses a GHCR image only after checking its OCI revision
 matches the tag commit. The separate `dockerhub` job logs into GHCR and Docker Hub, copies the already-published manifest
-by digest without rebuilding, refuses a mismatching existing Hub tag, verifies the copied digest and logs out of both
-registries. `release` runs only after that copy succeeds and updates the top-of-notes Docker image section idempotently;
+by digest with `skopeo copy --all --preserve-digests` (no rebuild or manifest-list wrapping), refuses a mismatching
+existing Hub tag (the only repair is replacing a manifest list whose sole child is the expected digest), verifies the
+copied top-level digest and logs out of both registries, including both Docker Hub names (`docker.io` and
+`https://index.docker.io/v1/`). `release` runs only after that copy succeeds and updates the top-of-notes Docker image section idempotently;
 existing jar assets are not replaced. `latest` and `dockerhub-latest` independently select the numerically greatest stable
 release and point their registry aliases to that exact manifest.
 
