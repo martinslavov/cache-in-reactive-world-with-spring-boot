@@ -615,5 +615,138 @@ class PruneStepBehaviorTest(unittest.TestCase):
         self.assertFalse(any(call[0] in ("delete-release", "delete-tag") for call in state["calls"]))
 
 
+class ProjectBoardTokenBehaviorTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.script = _step("ci-pr-issue-tracking.yml", "Add tracking issue to RCAS Tracking board", job="create-issue")
+
+    MOCK_GH = """#!/bin/sh
+printf '%s\\n' "$*" >> "$GH_LOG"
+case "$*" in
+  *"user(login"*) echo '{"id":"PROJ","field":{"id":"FIELD","options":[{"id":"O1","name":"Todo"},{"id":"O2","name":"Assessment"}]}}' ;;
+  *addProjectV2ItemById*) echo ITEM ;;
+  *updateProjectV2ItemFieldValue*) ;;
+  *"repos/"*) echo ISSUE_NODE ;;
+  *) exit 98 ;;
+esac
+"""
+
+    def run_step(self, token):
+        with tempfile.TemporaryDirectory() as directory:
+            gh = pathlib.Path(directory) / "gh"
+            gh.write_text(self.MOCK_GH, encoding="utf-8")
+            gh.chmod(0o755)
+            log = pathlib.Path(directory) / "gh.log"
+            result = subprocess.run(
+                ["/bin/bash", "-c", self.script],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=os.environ | {
+                    "PATH": directory + os.pathsep + os.environ["PATH"],
+                    "GH_TOKEN": token,
+                    "GH_LOG": str(log),
+                    "GITHUB_REPOSITORY": "martinslavov/rcas",
+                    "ISSUE_URL": "https://github.com/martinslavov/rcas/issues/141",
+                },
+            )
+            calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+        return result, calls
+
+    def test_empty_token_warns_and_skips_gh(self):
+        result, calls = self.run_step("")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("::warning::PROJECT_TOKEN is unavailable; skipping the RCAS Tracking board step.", result.stdout)
+        self.assertEqual(calls, [])
+
+    def test_nonempty_token_runs_existing_board_operations(self):
+        result, calls = self.run_step("token")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("::warning::", result.stdout)
+        self.assertEqual(len(calls), 4, calls)
+        self.assertIn("user(login", calls[0])
+        self.assertIn("projectV2(number: 1)", calls[0])
+        self.assertEqual(calls[1], "api repos/martinslavov/rcas/issues/141 --jq .node_id")
+        self.assertIn("addProjectV2ItemById", calls[2])
+        self.assertIn("-f project=PROJ -f content=ISSUE_NODE", calls[2])
+        self.assertIn("updateProjectV2ItemFieldValue", calls[3])
+        self.assertIn("-f project=PROJ -f item=ITEM -f field=FIELD -f option=O2", calls[3])
+
+
+TRACKING_HARNESS = """
+const fs = require('fs');
+const calls = [];
+const record = (name) => async (args) => { calls.push({ name, args }); return { data: { body: '' } }; };
+const rest = {
+  issues: {
+    listForRepo: 'listForRepo',
+    listComments: 'listComments',
+    create: async (args) => { calls.push({ name: 'issues.create', args });
+      return { data: { number: 141, html_url: 'https://github.com/martinslavov/rcas/issues/141' } }; },
+    createComment: record('issues.createComment'),
+  },
+  pulls: { get: record('pulls.get'), update: record('pulls.update') },
+};
+const github = { rest, paginate: async () => [] };
+const context = {
+  repo: { owner: 'martinslavov', repo: 'rcas' },
+  payload: { pull_request: { number: 143, title: 'Fix', html_url: 'https://github.com/martinslavov/rcas/pull/143',
+    body: 'desc', user: { login: 'dependabot[bot]' } } },
+};
+const outputs = {};
+const core = { setOutput: (k, v) => { outputs[k] = v; }, info: () => {} };
+const run = new Function('github', 'context', 'core', 'return (async () => {' + fs.readFileSync(process.argv[2], 'utf8') + '})();');
+run(github, context, core).then(() => {
+  console.log(JSON.stringify({ calls, outputs }));
+}).catch((error) => { console.error(error); process.exit(1); });
+"""
+
+
+class TrackingWithoutProjectTokenBehaviorTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        text = _jobs((ROOT / "workflows" / "ci-pr-issue-tracking.yml").read_text(encoding="utf-8"))["create-issue"]
+        steps = _steps(text)
+        cls.tracking = next(s for s in steps if "name: Create or find linked issue" in s)
+        cls.board = _step("ci-pr-issue-tracking.yml", "Add tracking issue to RCAS Tracking board", job="create-issue")
+
+    def github_script(self):
+        body = self.tracking.split("          script: |\n", 1)[1]
+        lines = [line[12:] if line.strip() else "" for line in body.splitlines()]
+        return "\n".join(lines)
+
+    def test_tracking_issue_comment_and_description_use_default_token_and_board_only_warns(self):
+        # The github-script step sets no github-token, so every call below uses github.token, not PROJECT_TOKEN.
+        self.assertNotIn("github-token", self.tracking)
+        self.assertNotIn("PROJECT_TOKEN", self.tracking)
+        with tempfile.TemporaryDirectory() as directory:
+            script = pathlib.Path(directory) / "script.js"
+            script.write_text(self.github_script(), encoding="utf-8")
+            harness = pathlib.Path(directory) / "harness.js"
+            harness.write_text(TRACKING_HARNESS, encoding="utf-8")
+            node = subprocess.run(["node", str(harness), str(script)], check=False, capture_output=True, text=True)
+            self.assertEqual(node.returncode, 0, node.stderr)
+            result = json.loads(node.stdout)
+            names = [call["name"] for call in result["calls"]]
+            self.assertEqual(names, ["issues.create", "issues.createComment", "pulls.get", "pulls.update"])
+            update = result["calls"][-1]["args"]
+            self.assertIn("**Tracking issue:** #141", update["body"])
+            issue_url = result["outputs"]["issue-url"]
+            self.assertEqual(issue_url, "https://github.com/martinslavov/rcas/issues/141")
+
+            gh = pathlib.Path(directory) / "gh"
+            gh.write_text("#!/bin/sh\necho called >> \"$GH_LOG\"\n", encoding="utf-8")
+            gh.chmod(0o755)
+            log = pathlib.Path(directory) / "gh.log"
+            board = subprocess.run(
+                ["/bin/bash", "-c", self.board], check=False, capture_output=True, text=True,
+                env=os.environ | {"PATH": directory + os.pathsep + os.environ["PATH"], "GH_TOKEN": "",
+                                   "GH_LOG": str(log), "GITHUB_REPOSITORY": "martinslavov/rcas",
+                                   "ISSUE_URL": issue_url})
+            self.assertEqual(board.returncode, 0, board.stderr)
+            self.assertIn("::warning::PROJECT_TOKEN is unavailable", board.stdout)
+            self.assertFalse(log.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

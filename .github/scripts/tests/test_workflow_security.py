@@ -267,5 +267,28 @@ class WorkflowSecurityTest(unittest.TestCase):
         self.assertIn("for attempt in $(seq 1 10)", tag)
 
 
+    def test_pr_issue_tracking_keeps_tracking_actions_and_scoped_board_secret(self):
+        path = ROOT / "workflows" / "ci-pr-issue-tracking.yml"
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("pull_request:\n    types: [opened]", text)
+        self.assertNotIn("pull_request_target", text)
+        self.assertIn("permissions: {}", text)
+        job = _jobs(text)["create-issue"]
+        self.assertIn("contents: read", job)
+        self.assertIn("issues: write", job)
+        self.assertIn("pull-requests: write", job)
+        self.assertNotIn("secrets.PROJECT_TOKEN", job.split("- name: Add tracking issue to RCAS Tracking board", 1)[0])
+
+        steps = _steps(text)
+        tracking = _index(steps, lambda step: "name: Create or find linked issue" in step)
+        board = _index(steps, lambda step: "name: Add tracking issue to RCAS Tracking board" in step)
+        self.assertLess(tracking, board)
+        self.assertIn("actions/github-script@", steps[tracking])
+        for operation in ("github.rest.issues.create", "github.rest.issues.createComment", "github.rest.pulls.update"):
+            with self.subTest(operation=operation):
+                self.assertIn(operation, steps[tracking])
+        self.assertIn("secrets.PROJECT_TOKEN", steps[board])
+
+
 if __name__ == "__main__":
     unittest.main()
