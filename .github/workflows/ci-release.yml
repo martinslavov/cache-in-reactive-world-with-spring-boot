@@ -501,11 +501,15 @@ jobs:
                 -H 'Content-Type: application/json' --data-binary @- \
             | jq -er '.token') || { echo "::error::Docker Hub API login failed; verify DOCKERHUB_PUSH_TOKEN Read, Write & Delete access." >&2; exit 1; }
           echo "::add-mask::$hub_token"
+          auth_header_file=$(mktemp "$RUNNER_TEMP/dockerhub-auth-header.XXXXXX")
+          chmod 600 "$auth_header_file"
+          trap 'rm -f "$auth_header_file"' EXIT
+          printf 'Authorization: JWT %s\n' "$hub_token" > "$auth_header_file"
           while IFS= read -r tag; do
             [ -n "$tag" ] || continue
             code=$(curl --silent --show-error -o "$RUNNER_TEMP/dockerhub-delete-response" -w '%{http_code}' \
               -X DELETE "https://hub.docker.com/v2/repositories/$DOCKERHUB_USERNAME/rcas/tags/$tag" \
-              -H "Authorization: JWT $hub_token") || { echo "::error::Docker Hub tag deletion request failed for $tag; retaining all releases and tags." >&2; exit 1; }
+              -H "@$auth_header_file") || { echo "::error::Docker Hub tag deletion request failed for $tag; retaining all releases and tags." >&2; exit 1; }
             case "$code" in
               204|404) echo "Deleted or already absent Docker Hub tag $tag" ;;
               *) echo "::error::Docker Hub refused deletion of stale tag $tag (HTTP $code); DOCKERHUB_PUSH_TOKEN needs Read, Write & Delete scope. Retaining releases and tags." >&2; exit 1 ;;

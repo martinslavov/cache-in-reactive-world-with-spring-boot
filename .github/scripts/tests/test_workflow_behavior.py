@@ -349,6 +349,14 @@ MOCK_CURL = textwrap.dedent(
     method = args[args.index("-X") + 1] if "-X" in args else "GET"
     url = next((arg for arg in args if arg.startswith("https://")), "")
     state.setdefault("curl_calls", []).append([method, url, args])
+    headers = []
+    for index, arg in enumerate(args[:-1]):
+        if arg in ("-H", "--header"):
+            header = args[index + 1]
+            if header.startswith("@"):
+                header = open(header[1:], encoding="utf-8").read().rstrip("\\n")
+            headers.append(header)
+    state.setdefault("curl_headers", []).append([method, url, headers])
     if method == "POST":
         if state.get("fail_hub_login"):
             json.dump(state, open(path, "w", encoding="utf-8"))
@@ -925,6 +933,25 @@ class PruneStepBehaviorTest(unittest.TestCase):
             self.assertLess(calls.index(["delete-hub-tag", tag, 204]), calls.index(["delete-image", version_id]))
             self.assertLess(calls.index(["delete-image", version_id]), calls.index(["delete-release", tag]))
         self.assertFalse(any(call[0] == "delete-image" and call[1] == 210 for call in calls))
+
+    def test_dockerhub_secrets_are_not_passed_in_curl_argv(self):
+        gh = self.inventory()
+        result = gh.run(self.script, DOCKERHUB_USERNAME="test", DOCKERHUB_PUSH_TOKEN="mock-push-token")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        state = gh.state()
+        curl_args = [arg for _, _, args in state["curl_calls"] for arg in args]
+        self.assertNotIn("mock-push-token", curl_args)
+        self.assertNotIn("mock-jwt-token", curl_args)
+        delete_headers = [headers for method, _, headers in state["curl_headers"] if method == "DELETE"]
+        self.assertEqual(delete_headers, [["Authorization: JWT mock-jwt-token"]] * 2)
+
+        auth_file_args = [args[index + 1][1:]
+                          for method, _, args in state["curl_calls"] if method == "DELETE"
+                          for index, arg in enumerate(args[:-1])
+                          if arg in ("-H", "--header") and args[index + 1].startswith("@")]
+        self.assertEqual(len(auth_file_args), 2)
+        self.assertTrue(all(not pathlib.Path(path).exists() for path in auth_file_args))
 
     def test_denied_image_deletion_fails_closed_and_keeps_release_and_tag(self):
         gh = self.inventory(deny=True)
