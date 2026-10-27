@@ -200,6 +200,9 @@ class WorkflowSecurityTest(unittest.TestCase):
                     self.assertIn(RELEASE_QUEUE, jobs[job])
         caller = _jobs((ROOT / "workflows" / "ci-tag.yml").read_text(encoding="utf-8"))["release"]
         self.assertNotIn("concurrency:", caller)
+        self.assertIn("packages: write", caller)
+        self.assertIn("DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}", caller)
+        self.assertIn("DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}", caller)
 
     def test_tag_write_job_is_separated_from_the_read_only_plan_job(self):
         jobs = _jobs((ROOT / "workflows" / "ci-tag.yml").read_text(encoding="utf-8"))

@@ -198,6 +198,10 @@ jobs:
     if: needs.tag.outputs.tag != ''
     permissions:
       contents: write
+      packages: write
     uses: ./.github/workflows/ci-release.yml
     with:
       tag: ${{ needs.tag.outputs.tag }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

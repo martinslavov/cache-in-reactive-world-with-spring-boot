@@ -21,6 +21,7 @@ Every workflow sets `permissions: {}` at the top level; each job declares only t
 | `ci-issue-board.yml` | `add-to-board` | none (`permissions: {}`) | `PROJECT_TOKEN` |
 | `ci-tag.yml` | `plan` | `contents: read`, `pull-requests: read` | `GITHUB_TOKEN` (read-only; checks out and runs the release helper) |
 | `ci-tag.yml` | `tag` | `contents: write` | `GITHUB_TOKEN` (create tag; no checkout, runs no repository code) |
+| `ci-tag.yml` | `release` caller | `contents: write`, `packages: write` | Reusable-workflow permission ceiling; forwards Docker Hub secrets only to CI Release |
 | `ci-release.yml` | `resolve`, `build` | `contents: read` | `GITHUB_TOKEN` (validate tag and fetch source) |
 | `ci-release.yml` | `publish` | `contents: read`, `packages: write` | `GITHUB_TOKEN`, `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (registry logins in publish steps only) |
 | `ci-release.yml` | `release` | `contents: write` | `GITHUB_TOKEN` (create/update notes and attach jar only for a new release) |
@@ -31,6 +32,9 @@ Every workflow sets `permissions: {}` at the top level; each job declares only t
 with a merged PR from a fork. It does not execute PR code. Privilege is separated: the read-only `plan` job looks up the PR and calculates the tag with the checked-out helper, while the `contents: write` `tag` job does not check out the repository or run repository scripts. It treats the plan outputs as untrusted: the tag must match strict stable SemVer `^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`, the bump must be `major`, `minor` or `patch`, and the commit (taken from the event context, never from a job output) must be a 40-hex SHA that exists in the repository. It recomputes the version from the live tags on each attempt, so a plan that raced or went stale cannot allocate a wrong or duplicate version, and returns the existing tag when the commit is already tagged. The mutating jobs (`ci-tag.yml` `tag`, and `ci-release.yml` `publish`, `release`, `latest` and `prune`) use the
 job-level `release-tag` concurrency group with `queue: max` and no cancellation. This keeps tag pushes, image/release
 updates, latest alias movement and cleanup serialized without a workflow-level group that could block a reusable call.
+The `ci-tag.yml` reusable-workflow caller grants the maximum `contents: write`/`packages: write` permissions required by
+CI Release and explicitly passes only the two Docker Hub secrets; each called job still declares its own narrower token
+permissions, and only the publisher references those secrets in its registry-login steps.
 CI Release accepts only an existing strict stable `vX.Y.Z` tag (including `workflow_dispatch` backfills), resolves it to
 a commit, builds/tests at that immutable commit, and passes only the same-run jar and health-check class to its image job.
 The `publish` job alone receives Docker Hub secrets; it logs out of `dhi.io` and `ghcr.io` on every exit and verifies
